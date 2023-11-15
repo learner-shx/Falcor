@@ -7,8 +7,8 @@ def render_graph_WARDiffPathTracer():
                                        "maxBounces": 0,
                                        "samplesPerPixel": 1,
                                        "diffMode": "ForwardDiffDebug",
-                                       #"diffVarName": "CBOX_BUNNY_MATERIAL",
-                                       "diffVarName": "CBOX_BUNNY_TRANSLATION",
+                                       "diffVarName": "CBOX_BUNNY_MATERIAL",
+                                    #    "diffVarName": "CBOX_BUNNY_TRANSLATION",
                                    })
     g.addPass(WARDiffPathTracer, "WARDiffPathTracer")
 

@@ -184,7 +184,7 @@ void rayGen()
         // Set differential query mode to `ForwardDebug` for visualizing gradient images.
         SceneQueryAD.Differential dQuery;
         dQuery.gradInfo = { SceneGradientFlag.make(GradientMode.ForwardDebug) };
-
+        
         DifferentialPair<float3> dpColor = fwd_diff(tracePaths)(diffPair(sceneQuery, dQuery), pixel);
         gOutputColor[pixel] = float4(dpColor.p, 1.f);
 

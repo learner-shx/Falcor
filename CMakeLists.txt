@@ -24,7 +24,7 @@ set_property(CACHE FALCOR_ENABLE_ASSERTS PROPERTY STRINGS AUTO ON OFF)
 set(FALCOR_ENABLE_PROFILER ON CACHE BOOL "Enable profiler")
 
 # Enable/disable using system Python distribution. This requires Python 3.7 to be available.
-set(FALCOR_USE_SYSTEM_PYTHON OFF CACHE BOOL "Use system Python distribution")
+set(FALCOR_USE_SYSTEM_PYTHON ON CACHE BOOL "Use system Python distribution")
 
 # Enable/disable USD.
 set(FALCOR_ENABLE_USD ON CACHE BOOL "Enable USD")
