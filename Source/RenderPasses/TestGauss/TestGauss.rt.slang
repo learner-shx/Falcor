@@ -28,9 +28,6 @@
 import Scene.Raytracing;
 import Utils.Geometry.IntersectionHelpers;
 
-// #ifndef MODE
-// #error MODE is expected to be defined
-// #endif
 
 struct TestProgram
 {
@@ -79,11 +76,6 @@ void miss1(inout RayData rayData)
     rayData.color = float3(0.1f);
 }
 
-//
-// Shader entry points for triangle hit groups.
-//
-
-#if MODE == 0
 
 [shader("anyhit")]
 void anyHit(inout RayData rayData: SV_RayPayload, BuiltInTriangleIntersectionAttributes attribs: SV_IntersectionAttributes)
@@ -94,6 +86,7 @@ void anyHit(inout RayData rayData: SV_RayPayload, BuiltInTriangleIntersectionAtt
     uint materialID = gScene.getMaterialID(instanceID);
     if (gScene.materials.alphaTest(v, materialID, 0.f))
         IgnoreHit();
+
 }
 
 [shader("closesthit")]
@@ -178,8 +171,12 @@ void closestHitSphereYellow(inout RayData rayData, MyIntersectionAttribs attribs
     rayData.color = float3(1.f, 1.f, 0.f);
 }
 
-#endif
-
+[shader("closesthit")]
+void closestHitSphereAttrib(inout RayData rayData, MyIntersectionAttribs attribs)
+{
+    rayData.t = RayTCurrent();
+    rayData.color += float3(0.1f, 0.f, 0.f);
+}
 //
 // Entry point for ray generation shader.
 //

@@ -30,18 +30,38 @@
 
 const char kShaderFilename[] = "RenderPasses/TestGauss/TestGauss.rt.slang";
 
-const uint32_t kMaxPayloadSizeBytes = 16;
-const uint32_t kMaxAttributeSizeBytes = 8;
-const uint32_t kMaxRecursionDepth = 1;
+// Ray tracing settings that affect the traversal stack size.
+// These should be set as small as possible.
+const uint32_t kMaxPayloadSizeBytes = 72u;
+const uint32_t kMaxAttributeSizeBytes = 8u;
+const uint32_t kMaxRecursionDepth = 2u;
 
-const char kOutput[] = "output";
+const char kInputViewDir[] = "ViewW";
+
+const ChannelList kInputChannels = {
+    // clang-format off
+    { "vbuffer",        "gVBuffer",     "Visibility buffer in packed format" },
+    { kInputViewDir,    "gViewW",       "World-space view direction (xyz float format)", true /* optional */ },
+    // clang-format on
+};
+
+const ChannelList kOutputChannels = {
+    // clang-format off
+    { "color",          "gOutputColor", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
+    // clang-format on
+};
+
+const char kMaxBounces[] = "maxBounces";
+const char kComputeDirect[] = "computeDirect";
+const char kUseImportanceSampling[] = "useImportanceSampling";
+
 std::mt19937 rng;
-
 
 extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registry)
 {
     registry.registerClass<RenderPass, TestGauss>();
 }
+
 void TestGauss::registerScriptBindings(pybind11::module& m)
 {
     pybind11::class_<TestGauss, RenderPass, ref<TestGauss>> pass(m, "TestGauss");
@@ -49,29 +69,63 @@ void TestGauss::registerScriptBindings(pybind11::module& m)
 }
 
 
-TestGauss::TestGauss(ref<Device> pDevice, const Properties& props) : RenderPass(pDevice) {}
+TestGauss::TestGauss(ref<Device> pDevice, const Properties& props) : RenderPass(pDevice)
+{
+    parseProperties(props);
 
+    // Create sample generator.
+    mpSampleGenerator = SampleGenerator::create(SAMPLE_GENERATOR_UNIFORM);
+    FALCOR_ASSERT(mpSampleGenerator);
+}
+
+void TestGauss::parseProperties(const Properties& props)
+{
+    for (const auto& [key, value] : props)
+    {
+        if (key == kMaxBounces)
+            mMaxBounces = value;
+        else if (key == kComputeDirect)
+            mComputeDirect = value;
+        else if (key == kUseImportanceSampling)
+            mUseImportanceSampling = value;
+        else
+            logWarning("Unknown field `" + key + "` in TestGauss pass");
+    }
+}
 Properties TestGauss::getProperties() const
 {
-    return {};
+    Properties props;
+    props[kMaxBounces] = mMaxBounces;
+    props[kComputeDirect] = mComputeDirect;
+    props[kUseImportanceSampling] = mUseImportanceSampling;
+    return props;
 }
 
 RenderPassReflection TestGauss::reflect(const CompileData& compileData)
 {
     // Define the required resources here
     RenderPassReflection reflector;
+
     // reflector.addOutput("dst");
     // reflector.addInput("src");
-    reflector.addOutput(kOutput, "Output image").bindFlags(ResourceBindFlags::UnorderedAccess).format(ResourceFormat::RGBA32Float);
+    // reflector.addOutput(kOutput, "Output image").bindFlags(ResourceBindFlags::UnorderedAccess).format(ResourceFormat::RGBA32Float);
+    addRenderPassInputs(reflector, kInputChannels);
+    addRenderPassOutputs(reflector, kOutputChannels);
+
     return reflector;
 }
 
 void TestGauss::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
 {
+    // Set new scene.
     mpScene = pScene;
 
+    // Clear data for previous scene.
+    // After changing scene, the ray tracing program needs to be recreated.
     mRT.pProgram = nullptr;
+    mRT.pBindingTable = nullptr;
     mRT.pVars = nullptr;
+    mFrameCount = 0;
 
     if (mpScene)
     {
@@ -91,38 +145,81 @@ void TestGauss::sceneChanged()
     ProgramDesc desc;
     desc.addShaderModules(mpScene->getShaderModules());
     desc.addShaderLibrary(kShaderFilename);
+    desc.addMaxPayloadSize(kMaxPayloadSizeBytes);
+    desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
     desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
     desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
-    desc.setMaxAttributeSize(kMaxAttributeSizeBytes);
+    // desc.setMaxAttributeSize(kMaxAttributeSizeBytes);
 
-    ref<RtBindingTable> sbt;
+    mRT.pBindingTable = RtBindingTable::create(2, 2, geometryCount);
+    auto& sbt = mRT.pBindingTable;
+
+    sbt->setRayGen(desc.addRayGen("rayGen"));
+    sbt->setMiss(0, desc.addMiss("scatterMiss"));
+    sbt->setMiss(1, desc.addMiss("shadowMiss"));
+
+    if (mpScene->hasGeometryType(Scene::GeometryType::TriangleMesh))
+    {
+        sbt->setHitGroup(
+            0,
+            mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh);
+            desc.addHitGroup("scatterTriangleMeshClosestHit", "scatterTriangleMeshAnyHit")
+        );
+        sbt->setHitGroup(
+            1,
+            mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh);
+            desc.addHitGroup("", "shadowTriangleMeshAnyHit");
+        )
+    }
+
+    if (mpScene->hasGeometryType(Scene::GeometryType::DisplacedTriangleMesh))
+    {
+        sbt->setHitGroup(
+            0,
+            mpScene->getGeometryIDs(Scene::GeometryType::DisplacedTriangleMesh),
+            desc.addHitGroup("scatterDisplacedTriangleMeshClosestHit", "", "displacedTriangleMeshIntersection")
+        );
+        sbt->setHitGroup(
+            1,
+            mpScene->getGeometryIDs(Scene::GeometryType::DisplacedTriangleMesh),
+            desc.addHitGroup("", "", "displacedTriangleMeshIntersection")
+        );
+    }
+
+    if (mpScene->hasGeometryType(Scene::GeometryType::Curve))
+    {
+        sbt->setHitGroup(
+            0, mpScene->getGeometryIDs(Scene::GeometryType::Curve), desc.addHitGroup("scatterCurveClosestHit", "", "curveIntersection")
+        );
+        sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::Curve), desc.addHitGroup("", "", "curveIntersection"));
+    }
+
+    if (mpScene->hasGeometryType(Scene::GeometryType::SDFGrid))
+    {
+        sbt->setHitGroup(
+            0,
+            mpScene->getGeometryIDs(Scene::GeometryType::SDFGrid),
+            desc.addHitGroup("scatterSdfGridClosestHit", "", "sdfGridIntersection")
+        );
+        sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::SDFGrid), desc.addHitGroup("", "", "sdfGridIntersection"));
+    }
 
 
     // In this mode we test having two different ray types traced against
     // both triangles and custom primitives using intersection shaders.
 
-    sbt = RtBindingTable::create(2, 2, geometryCount);
-
-    // Create hit group shaders.
-    auto defaultMtl0 = desc.addHitGroup("closestHitMtl0", "anyHit", "");
-    auto defaultMtl1 = desc.addHitGroup("closestHitMtl1", "anyHit", "");
-
-    auto greenMtl = desc.addHitGroup("closestHitGreen", "", "");
-    auto redMtl = desc.addHitGroup("closestHitRed", "", "");
-
-    auto sphereDefaultMtl0 = desc.addHitGroup("closestHitSphereMtl0", "", "intersectSphere");
-    auto sphereDefaultMtl1 = desc.addHitGroup("closestHitSphereMtl1", "", "intersectSphere");
-
     auto spherePurple = desc.addHitGroup("closestHitSpherePurple", "", "intersectSphere");
     auto sphereYellow = desc.addHitGroup("closestHitSphereYellow", "", "intersectSphere");
+    auto sphereAttrib = desc.addHitGroup("closestHitSphereAttrib", "", "intersectSphere");
 
-    // Assign default hit groups to all geometries.
-    sbt->setHitGroup(0, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), defaultMtl0);
-    sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), defaultMtl1);
-
-    sbt->setHitGroup(0, mpScene->getGeometryIDs(Scene::GeometryType::Custom), sphereDefaultMtl0);
-    sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::Custom), sphereDefaultMtl1);
-
+    if (mpScene->hasGeometryTypes(Scene::GeometryType::Custom))
+    {
+        sbt->setHitGroup(
+            0,
+            mpScene->getGeometryIDs(Scene::GeometryType::Custom),
+            desc.addHitGroup("closestHitSphereAttrib", "", "intersectSphere")
+        );
+    }
     // Override specific hit groups for some geometries.
     for (uint geometryID = 0; geometryID < geometryCount; geometryID++)
     {
@@ -133,12 +230,12 @@ void TestGauss::sceneChanged()
             if (geometryID == 1)
             {
                 sbt->setHitGroup(0, geometryID, greenMtl);
-                sbt->setHitGroup(1, geometryID, redMtl);
+                sbt->setHitGroup(1, geometryID, greenMtl);
             }
             else if (geometryID == 3)
             {
                 sbt->setHitGroup(0, geometryID, redMtl);
-                sbt->setHitGroup(1, geometryID, greenMtl);
+                sbt->setHitGroup(1, geometryID, redMtl);
             }
         }
         else if (type == Scene::GeometryType::Custom)
@@ -147,18 +244,20 @@ void TestGauss::sceneChanged()
             uint32_t userID = mpScene->getCustomPrimitive(index).userID;
 
             // Use non-default material for custom primitives with even userID.
-            if (userID % 2 == 0)
-            {
-                sbt->setHitGroup(0, geometryID, spherePurple);
-                sbt->setHitGroup(1, geometryID, sphereYellow);
-            }
+            // if (userID % 2 == 0)
+            // {
+            //     sbt->setHitGroup(0, geometryID, spherePurple);
+            //     sbt->setHitGroup(1, geometryID, sphereYellow);
+            // }
+            sbt->setHitGroup(0, geometryID, sphereAttrib);
+            sbt->setHitGroup(1, geometryID, sphereAttrib);
         }
     }
 
     // Add global type conformances.
     desc.addTypeConformances(mpScene->getTypeConformances());
 
-    
+
 
     // Create raygen and miss shaders.
     sbt->setRayGen(desc.addRayGen("rayGen"));
@@ -199,7 +298,7 @@ void TestGauss::execute(RenderContext* pRenderContext, const RenderData& renderD
 
 }
 
-void TestGauss::renderUI(Gui::Widgets& widget) 
+void TestGauss::renderUI(Gui::Widgets& widget)
 {
     if (!mpScene)
     {
@@ -263,4 +362,5 @@ void TestGauss::addRandomGauss()
     float r = 0.5f * u(rng) + 0.5f;
 
     mpScene->addCustomPrimitive(mUserID++, AABB(c - r, c + r));
+
 }

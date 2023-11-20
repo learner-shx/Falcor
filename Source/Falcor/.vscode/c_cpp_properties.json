@@ -1,0 +1,27 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "C:/WorkSpace/Falcor/external/pybind11/include",
+                "C:/WorkSpace/Falcor/build/windows-ninja-msvc/bin/Debug/pythondist/include",
+                "C:/WorkSpace/Falcor/external/include",
+                "C:/WorkSpace/Falcor/external/packman/nanovdb/include",
+                "C:/WorkSpace/Falcor/external/fmt/include",
+                "C:/WorkSpace/Falcor/external/packman/slang",
+                "C:/WorkSpace/Falcor/external/imgui"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "windowsSdkVersion": "10.0.22621.0",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x64"
+        }
+    ],
+    "version": 4
+}

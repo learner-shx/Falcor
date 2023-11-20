@@ -28,6 +28,7 @@
 #pragma once
 #include "Falcor.h"
 #include "RenderGraph/RenderPass.h"
+#include "Utils/Sampling/SampleGenerator.h"
 
 using namespace Falcor;
 
@@ -53,19 +54,50 @@ public:
     virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
     static void registerScriptBindings(pybind11::module& m);
+
 private:
+    void parseProperties(const Properties& props);
+    void prepareVars();
+
     void sceneChanged();
     void addRandomGauss();
 
+    // Internal state
+
+    /// Current scene.
     ref<Scene> mpScene;
+    /// GPU sample generator.
+    ref<SampleGenerator> mpSampleGenerator;
+
+    /// UI param.
     uint32_t mSelectedIdx = 0;
     uint32_t mPrevSelectedIdx = -1;
-    uint32_t mUserID = 0;
     AABB mSelectedAABB;
-    
-    struct
+
+    /// Gauss count.
+    uint32_t mUserID = 1;
+
+    /// Max number of indirect bounces (0 = none).
+    uint mMaxBounces = 3;
+
+    /// Compute direct illumination (otherwise indirect only).
+    bool mComputeDirect = true;
+
+    /// Use importance sampling for materials.
+    bool mUseImportanceSampling = true;
+
+    // Runtime data
+
+    /// Frame count since scene was loaded.
+    uint mFrameCount = 0;
+    bool mOptionsChanged = false;
+
+    // Ray tracing program
+    struct TracePass
     {
         ref<Program> pProgram;
+        ref<RtBindingTable> pBindingTable;
         ref<RtProgramVars> pVars;
     } mRT;
+
 };
