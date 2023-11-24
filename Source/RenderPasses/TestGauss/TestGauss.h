@@ -30,6 +30,7 @@
 #include "RenderGraph/RenderPass.h"
 #include "Utils/Sampling/SampleGenerator.h"
 
+
 using namespace Falcor;
 
 class TestGauss : public RenderPass

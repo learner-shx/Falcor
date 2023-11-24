@@ -699,7 +699,7 @@ size_t executeProcess(const std::string& appName, const std::string& commandLine
     if (!CreateProcessA(
             nullptr,
             (LPSTR)commandLine.c_str(),
-            nullptr,
+            nullptr, 
             nullptr,
             TRUE,
             NORMAL_PRIORITY_CLASS,

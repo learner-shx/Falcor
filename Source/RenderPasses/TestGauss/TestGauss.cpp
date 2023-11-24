@@ -26,7 +26,11 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #include "TestGauss.h"
+#include "RenderGraph/RenderPassHelpers.h"
+#include "RenderGraph/RenderPassStandardFlags.h"
+
 #include <random>
+
 
 const char kShaderFilename[] = "RenderPasses/TestGauss/TestGauss.rt.slang";
 
@@ -36,7 +40,7 @@ const uint32_t kMaxPayloadSizeBytes = 72u;
 const uint32_t kMaxAttributeSizeBytes = 8u;
 const uint32_t kMaxRecursionDepth = 2u;
 
-const char kInputViewDir[] = "ViewW";
+const char kInputViewDir[] = "viewW";
 
 const ChannelList kInputChannels = {
     // clang-format off
@@ -74,7 +78,7 @@ TestGauss::TestGauss(ref<Device> pDevice, const Properties& props) : RenderPass(
     parseProperties(props);
 
     // Create sample generator.
-    mpSampleGenerator = SampleGenerator::create(SAMPLE_GENERATOR_UNIFORM);
+    mpSampleGenerator = SampleGenerator::create(mpDevice, SAMPLE_GENERATOR_UNIFORM);
     FALCOR_ASSERT(mpSampleGenerator);
 }
 
@@ -115,6 +119,100 @@ RenderPassReflection TestGauss::reflect(const CompileData& compileData)
     return reflector;
 }
 
+void TestGauss::execute(RenderContext* pRenderContext, const RenderData& renderData)
+{
+    // renderData holds the requested resources
+    // auto& pTexture = renderData.getTexture("src");
+    auto& dict = renderData.getDictionary();
+
+    if (mOptionsChanged)
+    {
+        auto flags = dict.getValue(kRenderPassRefreshFlags, RenderPassRefreshFlags::None);
+        dict[Falcor::kRenderPassRefreshFlags] = flags | Falcor::RenderPassRefreshFlags::RenderOptionsChanged;
+        mOptionsChanged = false;
+    }
+    // If we have no scene, just clear the outputs and return.
+    if (!mpScene)
+    {
+        for(auto it : kOutputChannels)
+        {
+            Texture* pDst = renderData.getTexture(it.name).get();
+            if (pDst)
+                pRenderContext->clearTexture(pDst);
+        }
+        return;
+    }
+
+    // Check for scene changes that require shader recompilation.
+    if (is_set(mpScene->getUpdates(), Scene::UpdateFlags::RecompileNeeded) ||
+        is_set(mpScene->getUpdates(), Scene::UpdateFlags::GeometryChanged))
+    {
+        sceneChanged();
+    }
+
+    // Request the light collection if emissive lights are enabled.
+    if (mpScene->getRenderSettings().useEmissiveLights)
+    {
+        mpScene->getLightCollection(pRenderContext);
+    }
+
+    // Configure depth-of-field.
+    const bool useDOF = mpScene->getCamera()->getApertureRadius() > 0.f;
+    if (useDOF && renderData[kInputViewDir] == nullptr)
+    {
+        logWarning("Depth-of-field requires the '{}' input. Expect incorrect shading.", kInputViewDir);
+    }
+
+
+    // Specialize program
+    // These defines should not modify the program vars. Do not trigger program vars re-creation.
+    mRT.pProgram->addDefine("MAX_BOUNCES", std::to_string(mMaxBounces));
+    mRT.pProgram->addDefine("COMPUTE_DIRECT", mComputeDirect ? "1" : "0");
+    mRT.pProgram->addDefine("USE_IMPORTANCE_SAMPLING", mUseImportanceSampling ? "1" : "0");
+    mRT.pProgram->addDefine("USE_ANALYTIC_LIGHTS", mpScene->useAnalyticLights() ? "1" : "0");
+    mRT.pProgram->addDefine("USE_EMISSIVE_LIGHTS", mpScene->useEmissiveLights() ? "1" : "0");
+    mRT.pProgram->addDefine("USE_ENV_LIGHT", mpScene->useEnvLight() ? "1" : "0");
+    mRT.pProgram->addDefine("USE_ENV_BACKGROUND", mpScene->useEnvBackground() ? "1" : "0");
+
+    // For optional I/O resources, set 'is_valid_<name>' defines to inform the program of which ones it can access.
+    // TODO: This should be moved to a more general mechanism using Slang.
+    mRT.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
+    mRT.pProgram->addDefines(getValidResourceDefines(kOutputChannels, renderData));
+
+    // Prepare program vars. This may trigger shader compilation.
+    // The program should have all necvessary defines set at this point.
+    if (mRT.pVars == nullptr)
+    {
+        prepareVars();
+    }
+    FALCOR_ASSERT(mRT.pVars);
+    // Set constants.
+    auto var = mRT.pVars->getRootVar();
+    var["CB"]["gFrameCount"] = mFrameCount;
+    var["CB"]["gPRNGDimension"] = dict.keyExists(kRenderPassPRNGDimension) ? dict[kRenderPassPRNGDimension] : 0u;
+
+    // Bind I/O buffers. These needs to be done per-frame as the buffers may change anytime.
+    auto bind = [&](const ChannelDesc& desc)
+    {
+        if (!desc.texname.empty())
+        {
+            var[desc.texname] = renderData.getTexture(desc.name);
+        }
+    };
+
+    for (auto channel : kInputChannels)
+        bind(channel);
+    for (auto channel : kOutputChannels)
+        bind(channel);
+
+    const uint2 targetDim = renderData.getDefaultTextureDims();
+    FALCOR_ASSERT(targetDim.x > 0 && targetDim.y > 0);
+
+    mpScene->raytrace(pRenderContext, mRT.pProgram.get(), mRT.pVars, uint3(targetDim, 1));
+
+    mFrameCount++;
+}
+
 void TestGauss::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
 {
     // Set new scene.
@@ -145,10 +243,9 @@ void TestGauss::sceneChanged()
     ProgramDesc desc;
     desc.addShaderModules(mpScene->getShaderModules());
     desc.addShaderLibrary(kShaderFilename);
-    desc.addMaxPayloadSize(kMaxPayloadSizeBytes);
+    desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
     desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
     desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
-    desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
     // desc.setMaxAttributeSize(kMaxAttributeSizeBytes);
 
     mRT.pBindingTable = RtBindingTable::create(2, 2, geometryCount);
@@ -162,14 +259,12 @@ void TestGauss::sceneChanged()
     {
         sbt->setHitGroup(
             0,
-            mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh);
+            mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh),
             desc.addHitGroup("scatterTriangleMeshClosestHit", "scatterTriangleMeshAnyHit")
         );
         sbt->setHitGroup(
-            1,
-            mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh);
-            desc.addHitGroup("", "shadowTriangleMeshAnyHit");
-        )
+            1, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup("", "shadowTriangleMeshAnyHit")
+        );
     }
 
     if (mpScene->hasGeometryType(Scene::GeometryType::DisplacedTriangleMesh))
@@ -204,15 +299,7 @@ void TestGauss::sceneChanged()
         sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::SDFGrid), desc.addHitGroup("", "", "sdfGridIntersection"));
     }
 
-
-    // In this mode we test having two different ray types traced against
-    // both triangles and custom primitives using intersection shaders.
-
-    auto spherePurple = desc.addHitGroup("closestHitSpherePurple", "", "intersectSphere");
-    auto sphereYellow = desc.addHitGroup("closestHitSphereYellow", "", "intersectSphere");
-    auto sphereAttrib = desc.addHitGroup("closestHitSphereAttrib", "", "intersectSphere");
-
-    if (mpScene->hasGeometryTypes(Scene::GeometryType::Custom))
+    if (mpScene->hasGeometryType(Scene::GeometryType::Custom))
     {
         sbt->setHitGroup(
             0,
@@ -220,84 +307,29 @@ void TestGauss::sceneChanged()
             desc.addHitGroup("closestHitSphereAttrib", "", "intersectSphere")
         );
     }
-    // Override specific hit groups for some geometries.
-    for (uint geometryID = 0; geometryID < geometryCount; geometryID++)
-    {
-        auto type = mpScene->getGeometryType(GlobalGeometryID{geometryID});
-
-        if (type == Scene::GeometryType::TriangleMesh)
-        {
-            if (geometryID == 1)
-            {
-                sbt->setHitGroup(0, geometryID, greenMtl);
-                sbt->setHitGroup(1, geometryID, greenMtl);
-            }
-            else if (geometryID == 3)
-            {
-                sbt->setHitGroup(0, geometryID, redMtl);
-                sbt->setHitGroup(1, geometryID, redMtl);
-            }
-        }
-        else if (type == Scene::GeometryType::Custom)
-        {
-            uint32_t index = mpScene->getCustomPrimitiveIndex(GlobalGeometryID{geometryID});
-            uint32_t userID = mpScene->getCustomPrimitive(index).userID;
-
-            // Use non-default material for custom primitives with even userID.
-            // if (userID % 2 == 0)
-            // {
-            //     sbt->setHitGroup(0, geometryID, spherePurple);
-            //     sbt->setHitGroup(1, geometryID, sphereYellow);
-            // }
-            sbt->setHitGroup(0, geometryID, sphereAttrib);
-            sbt->setHitGroup(1, geometryID, sphereAttrib);
-        }
-    }
-
-    // Add global type conformances.
-    desc.addTypeConformances(mpScene->getTypeConformances());
-
-
-
-    // Create raygen and miss shaders.
-    sbt->setRayGen(desc.addRayGen("rayGen"));
-    sbt->setMiss(0, desc.addMiss("miss0"));
-    sbt->setMiss(1, desc.addMiss("miss1"));
 
     DefineList defines = mpScene->getSceneDefines();
     // defines.add("MODE", std::to_string(mMode));
 
-    // Create program and vars.
+    // Create program
     mRT.pProgram = Program::create(mpDevice, desc, defines);
-    mRT.pVars = RtProgramVars::create(mpDevice, mRT.pProgram, sbt);
+
 }
-void TestGauss::execute(RenderContext* pRenderContext, const RenderData& renderData)
+
+
+void TestGauss::prepareVars()
 {
-    // renderData holds the requested resources
-    // auto& pTexture = renderData.getTexture("src");
-    const uint2 frameDim = renderData.getDefaultTextureDims();
+    FALCOR_ASSERT(mpScene);
+    FALCOR_ASSERT(mRT.pProgram);
 
-    auto pOutput = renderData.getTexture(kOutput);
-    pRenderContext->clearUAV(pOutput->getUAV().get(), float4(0, 0, 0, 1));
+    mRT.pProgram->addDefines(mpSampleGenerator->getDefines());
+    mRT.pProgram->setTypeConformances(mpScene->getTypeConformances());
 
-    if (!mpScene)
-        return;
+    mRT.pVars = RtProgramVars::create(mpDevice, mRT.pProgram, mRT.pBindingTable);
 
-    // Check for scene changes that require shader recompilation.
-    if (is_set(mpScene->getUpdates(), Scene::UpdateFlags::RecompileNeeded) ||
-        is_set(mpScene->getUpdates(), Scene::UpdateFlags::GeometryChanged))
-    {
-        sceneChanged();
-    }
-
-    auto var = mRT.pVars->getRootVar()["gTestProgram"];
-    var["frameDim"] = frameDim;
-    var["output"] = pOutput;
-
-    mpScene->raytrace(pRenderContext, mRT.pProgram.get(), mRT.pVars, uint3(frameDim, 1));
-
+    auto var = mRT.pVars->getRootVar();
+    mpSampleGenerator->bindShaderData(var);
 }
-
 void TestGauss::renderUI(Gui::Widgets& widget)
 {
     if (!mpScene)
@@ -305,7 +337,6 @@ void TestGauss::renderUI(Gui::Widgets& widget)
         widget.text("No scene loaded!");
         return;
     }
-
 
     auto primCount = mpScene->getCustomPrimitiveCount();
     widget.text("Custom primitives: " + std::to_string(primCount));
@@ -318,6 +349,7 @@ void TestGauss::renderUI(Gui::Widgets& widget)
     {
         mPrevSelectedIdx = mSelectedIdx;
         mSelectedAABB = mpScene->getCustomPrimitiveAABB(mSelectedIdx);
+        mpScene->updateCustomPrimitive(mSelectedIdx, mSelectedAABB);
     }
 
     if (widget.button("Add"))
@@ -364,3 +396,4 @@ void TestGauss::addRandomGauss()
     mpScene->addCustomPrimitive(mUserID++, AABB(c - r, c + r));
 
 }
+
