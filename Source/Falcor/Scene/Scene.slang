@@ -911,6 +911,13 @@ struct Scene
         return proceduralPrimitiveAABBs[index];
     }
 
+    CustomPrimitiveDesc getCustomPrimitiveDesc(const GeometryInstanceID instanceID)
+    {
+        uint customPrimitiveIndex = getCustomPrimitiveIndex(instanceID);
+        uint index = customPrimitiveAABBOffset + customPrimitiveIndex;
+        return customPrimitives[index];
+    }
+
     // Curvature helpers
 
     /** Returns the estimated curvature from a triangle vertex attributes for ray tracing using the provided estimator.

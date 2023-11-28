@@ -181,10 +181,11 @@ void TestGauss::execute(RenderContext* pRenderContext, const RenderData& renderD
 
     // Prepare program vars. This may trigger shader compilation.
     // The program should have all necvessary defines set at this point.
-    if (mRT.pVars == nullptr)
-    {
-        prepareVars();
-    }
+    // if (mRT.pVars == nullptr)
+    // {
+    //     prepareVars();
+    // }
+    prepareVars();
     FALCOR_ASSERT(mRT.pVars);
     // Set constants.
     auto var = mRT.pVars->getRootVar();
@@ -313,6 +314,7 @@ void TestGauss::sceneChanged()
 
     // Create program
     mRT.pProgram = Program::create(mpDevice, desc, defines);
+    // prepareVars();
 
 }
 
@@ -394,6 +396,7 @@ void TestGauss::addRandomGauss()
     float r = 0.5f * u(rng) + 0.5f;
 
     mpScene->addCustomPrimitive(mUserID++, AABB(c - r, c + r));
+    sceneChanged();
 
 }
 

@@ -46,6 +46,8 @@ enum class HitType : uint32_t
     // Add new hit types here
     //
 
+    Gauss               = 7,    ///< Gauss hit.
+
     Count // Must be last
 };
 

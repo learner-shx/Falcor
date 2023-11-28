@@ -2642,6 +2642,7 @@ namespace Falcor
         CustomPrimitiveDesc desc = {};
         desc.userID = userID;
         desc.aabbOffset = (uint32_t)mCustomPrimitiveAABBs.size();
+        desc.color = float3(0.5f, 0.2f, 0.1f);
 
         mCustomPrimitiveDesc.push_back(desc);
         mCustomPrimitiveAABBs.push_back(aabb);

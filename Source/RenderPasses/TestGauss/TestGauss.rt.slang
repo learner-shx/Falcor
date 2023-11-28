@@ -36,6 +36,11 @@ import Utils.Sampling.SampleGenerator;
 import Utils.Geometry.IntersectionHelpers;
 import Rendering.Lights.LightHelpers;
 
+import DiffRendering.SharedTypes;
+import DiffRendering.DiffSceneIO;
+import DiffRendering.DiffSceneQuery;
+import DiffRendering.DiffDebug;
+
 cbuffer CB
 {
     uint gFrameCount;    // Frame count since scene was loaded.
@@ -648,8 +653,14 @@ void intersectSphere()
 [shader("closesthit")]
 void closestHitSphereAttrib(inout ScatterRayData rayData, MyIntersectionAttribs attribs)
 {
-    // rayData.thp = RayTCurrent();
-    rayData.radiance = float3(1.0f, 1.f, 1.f);
+    const GeometryInstanceID instanceID = getGeometryInstanceID();
+    CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(instanceID);
+
+    rayData.radiance = float3(desc.userID / 255, 0.0f, 0.0f);
+    // rayData.radiance += float3(0.1f);
+    rayData.radiance += desc.color;
+
+
 }
 
 // [shader("anyhit")]
