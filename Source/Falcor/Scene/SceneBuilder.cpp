@@ -784,6 +784,25 @@ namespace Falcor
         mSceneData.cachedMeshes.push_back(std::move(cachedMesh));
     }
 
+    void SceneBuilder::addCustomPrimitiveWithMaterial(uint32_t userID, const AABB& aabb, const ref<Material>& pMaterial)
+    {
+        // Currently each custom primitive has exactly one AABB. This may change in the future.
+        FALCOR_ASSERT(mSceneData.customPrimitiveDesc.size() == mSceneData.customPrimitiveAABBs.size());
+        if (mSceneData.customPrimitiveAABBs.size() > std::numeric_limits<uint32_t>::max())
+        {
+            FALCOR_THROW("Custom primitive count exceeds the maximum");
+        }
+
+        CustomPrimitiveDesc desc = {};
+        desc.userID = userID;
+        desc.aabbOffset = (uint32_t)mSceneData.customPrimitiveAABBs.size();
+        desc.color = float3(0.5f, 0.2f, 0.1f);
+        desc.materialID = addMaterial(pMaterial).getSlang();
+
+        mSceneData.customPrimitiveDesc.push_back(desc);
+        mSceneData.customPrimitiveAABBs.push_back(aabb);
+    }
+
     void SceneBuilder::addCustomPrimitive(uint32_t userID, const AABB& aabb)
     {
         // Currently each custom primitive has exactly one AABB. This may change in the future.
@@ -796,6 +815,8 @@ namespace Falcor
         CustomPrimitiveDesc desc = {};
         desc.userID = userID;
         desc.aabbOffset = (uint32_t)mSceneData.customPrimitiveAABBs.size();
+        desc.color = float3(0.5f, 0.2f, 0.1f);
+        desc.materialID = 0;
 
         mSceneData.customPrimitiveDesc.push_back(desc);
         mSceneData.customPrimitiveAABBs.push_back(aabb);
@@ -2984,6 +3005,7 @@ namespace Falcor
         sceneBuilder.def("addMeshInstance", &SceneBuilder::addMeshInstance);
         sceneBuilder.def("addSDFGridInstance", &SceneBuilder::addSDFGridInstance);
         sceneBuilder.def("addCustomPrimitive", &SceneBuilder::addCustomPrimitive);
+        sceneBuilder.def("addCustomPrimitiveWithMaterial", &SceneBuilder::addCustomPrimitiveWithMaterial);
 
         sceneBuilder.def("getSettings", static_cast<Settings&(SceneBuilder::*)()>(&SceneBuilder::getSettings), pybind11::return_value_policy::reference);
         sceneBuilder.def_property_readonly("assetResolver", &SceneBuilder::getAssetResolver, pybind11::return_value_policy::reference);

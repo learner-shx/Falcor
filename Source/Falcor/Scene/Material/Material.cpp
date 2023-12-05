@@ -369,6 +369,7 @@ namespace Falcor
         materialType.value("PBRTCoatedConductor", MaterialType::PBRTCoatedConductor);
         materialType.value("PBRTCoatedDiffuse", MaterialType::PBRTCoatedDiffuse);
         materialType.value("RGL", MaterialType::RGL);
+        materialType.value("Gauss", MaterialType::Gauss);
 
         pybind11::enum_<AlphaMode> alphaMode(m, "AlphaMode");
         alphaMode.value("Opaque", AlphaMode::Opaque);

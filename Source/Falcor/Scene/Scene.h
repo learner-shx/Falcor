@@ -823,6 +823,17 @@ namespace Falcor
         */
         uint32_t addCustomPrimitive(uint32_t userID, const AABB& aabb);
 
+        /** Add a custom primitive.
+            Custom primitives are sequentially numbered in the scene. The function returns the index at
+            which the primitive was inserted. Note that this index may change if primitives are removed.
+            Adding/removing custom primitives is a slow operation as the acceleration structure is rebuilt.
+            \param[in] userID User ID of primitive.
+            \param[in] aabb AABB of the primitive.
+            \param[in] pMateiral materail of the primitive.
+            \return Index of the custom primitive that was added.
+        */
+        uint32_t addCustomPrimitiveWithMaterial(uint32_t userID, const AABB& aabb, const ref<Material>& pMaterial);
+
         /** Remove a custom primitive.
             Custom primitives are sequentially numbered in the scene. The function removes the primitive at
             the given index. Note that the index of subsequent primtives will change.

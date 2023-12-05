@@ -457,6 +457,13 @@ namespace Falcor
         */
         void addCustomPrimitive(uint32_t userID, const AABB& aabb);
 
+        /** Add an AABB and a material defining a custom primitive.
+            \param[in] userID User-defined ID that can be used to identify different sub-types of custom primitives.
+            \param[in] aabb An AABB describing the bounds of the primitive.
+            \param[in] pMaterial An reference to a material.
+        */
+        void addCustomPrimitiveWithMaterial(uint32_t userID, const AABB& aabb, const ref<Material>& pMaterial);
+
         // Curves
 
         /** Add a curve.

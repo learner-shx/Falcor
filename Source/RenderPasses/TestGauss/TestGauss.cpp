@@ -28,6 +28,7 @@
 #include "TestGauss.h"
 #include "RenderGraph/RenderPassHelpers.h"
 #include "RenderGraph/RenderPassStandardFlags.h"
+#include "Scene/Material/GaussMaterial.h"
 
 #include <random>
 
@@ -305,7 +306,7 @@ void TestGauss::sceneChanged()
         sbt->setHitGroup(
             0,
             mpScene->getGeometryIDs(Scene::GeometryType::Custom),
-            desc.addHitGroup("closestHitSphereAttrib", "", "intersectSphere")
+            desc.addHitGroup("closestHitSphereAttrib", "anyHitSphereAttrib", "intersectSphere")
         );
     }
 
@@ -392,10 +393,14 @@ void TestGauss::addRandomGauss()
 
     std::uniform_real_distribution<float> u(0.f, 1.f);
 
+    ref<GaussMaterial> pRandomGaussMat = GaussMaterial::create(mpDevice, "");
+    pRandomGaussMat.get()->setBaseColor(float3(u(rng), u(rng), u(rng)));
+    pRandomGaussMat.get()->setCovariance(float3(u(rng), u(rng), u(rng)), float3(u(rng) * M_2_PI, u(rng) * M_2_PI, u(rng) * M_2_PI));
+    pRandomGaussMat.get()->setAlpha(u(rng));
     float3 c = {4.f * u(rng) - 2.f, u(rng), 4.f * u(rng) - 2.f};
     float r = 0.5f * u(rng) + 0.5f;
-
-    mpScene->addCustomPrimitive(mUserID++, AABB(c - r, c + r));
+    mpScene->addCustomPrimitiveWithMaterial(mUserID++, AABB(c - r, c + r), pRandomGaussMat);
+    mpScene->getMaterialSystem().update(true);
     sceneChanged();
 
 }

@@ -350,11 +350,13 @@ struct DynamicCurveVertexData
 /** Custom primitive data.
     The custom primitives are currently mapped 1:1 to the list of custom primitive AABBs.
 */
+
 struct CustomPrimitiveDesc
 {
     uint userID;        ///< User-defined ID that is specified during scene creation. This can be used to identify different sub-types of custom primitives.
     uint aabbOffset;    ///< Offset into list of procedural primitive AABBs.
-    float3 color;       ///< Color of the primitive.
+    float3 color;
+    uint materialID;
 };
 
 END_NAMESPACE_FALCOR

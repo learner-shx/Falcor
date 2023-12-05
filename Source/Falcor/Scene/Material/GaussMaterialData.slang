@@ -28,60 +28,24 @@
 #pragma once
 #include "Utils/HostDeviceShared.slangh"
 
+#ifdef HOST_CODE
+#include "Scene/Material/TextureHandle.slang"
+#include "Scene/Material/DiffuseSpecularData.slang"
+#else
+__exported import Scene.Material.TextureHandle;
+__exported import Scene.Material.DiffuseSpecularData;
+#endif
+
 BEGIN_NAMESPACE_FALCOR
 
-/** Material type.
+/** This is a host/device structure that describes a Gauss material.
 */
-// TODO: Specify the backing type when Slang issue has been resolved
-enum class MaterialType // : uint32_t
+struct GaussMaterialData
 {
-    Unknown,    ///< Unknown material type, e.g. type is not yet registered.
-
-    Standard,
-    Cloth,
-    Hair,
-    MERL,
-    MERLMix,
-    PBRTDiffuse,
-    PBRTDiffuseTransmission,
-    PBRTConductor,
-    PBRTDielectric,
-    PBRTCoatedConductor,
-    PBRTCoatedDiffuse,
-    RGL,
-    Gauss,
-    BuiltinCount // Must be last
-};
-
-/** Alpha mode. This specifies how alpha testing should be done.
-*/
-enum class AlphaMode
-{
-    Opaque,     ///< No alpha test.
-    Mask,       ///< Alpha mask.
-
-    Count // Must be last
-};
-
-/** Shading models supported by the standard material.
-*/
-enum class ShadingModel
-{
-    MetalRough,
-    SpecGloss,
-
-    Count // Must be last
-};
-
-/** Normal map type. This specifies the encoding of a normal map.
-*/
-enum class NormalMapType
-{
-    None,       ///< Normal map is not used.
-    RGB,        ///< Normal encoded in RGB channels in [0,1].
-    RG,         ///< Tangent space encoding in RG channels in [0,1].
-
-    Count // Must be last
+    float3 baseColor;
+    float3 covOffDiag;
+    float3 covDiag;
+    float alpha;
 };
 
 END_NAMESPACE_FALCOR

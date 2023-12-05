@@ -41,6 +41,7 @@ import DiffRendering.DiffSceneIO;
 import DiffRendering.DiffSceneQuery;
 import DiffRendering.DiffDebug;
 
+import Scene.Material.GaussMaterialData;
 cbuffer CB
 {
     uint gFrameCount;    // Frame count since scene was loaded.
@@ -507,6 +508,7 @@ void scatterTriangleMeshAnyHit(inout ScatterRayData rayData, BuiltInTriangleInte
     const uint materialID = gScene.getMaterialID(instanceID);
     if (gScene.materials.alphaTest(v, materialID, 0.f))
         IgnoreHit();
+    // rayData.radiance += float3(0.0f, 0.0f, 0.1f) * rayData.thp;
 }
 
 [shader("closesthit")]
@@ -517,13 +519,13 @@ void scatterTriangleMeshClosestHit(inout ScatterRayData rayData, BuiltInTriangle
     triangleHit.primitiveIndex = PrimitiveIndex();
     triangleHit.barycentrics = attribs.barycentrics;
     handleHit(HitInfo(triangleHit), rayData);
+    rayData.radiance += float3(0.0f, 0.0f, 0.1f) * rayData.thp;
 }
 
 [shader("anyhit")]
 void shadowTriangleMeshAnyHit(inout ShadowRayData rayData, BuiltInTriangleIntersectionAttributes attribs)
 {
     // Alpha test for non-opaque geometry.
-    IgnoreHit();
     GeometryInstanceID instanceID = getGeometryInstanceID();
     VertexData v = getVertexData(instanceID, PrimitiveIndex(), attribs);
     const uint materialID = gScene.getMaterialID(instanceID);
@@ -629,23 +631,111 @@ void rayGen()
 struct MyIntersectionAttribs
 {
     float t;
+    float d;
+    // float3 mean;
 };
+
+float3 transformPoint4x3(const float3 p, const float4x4 matrix)
+{
+    float3 transformed = {
+        matrix[0][0] * p.x + matrix[0][1] * p.y + matrix[0][2] * p.z + matrix[0][3],
+        matrix[1][0] * p.x + matrix[1][1] * p.y + matrix[1][2] * p.z + matrix[1][3],
+        matrix[2][0] * p.x + matrix[2][1] * p.y + matrix[2][2] * p.z + matrix[2][3]
+    };
+    return transformed;
+}
+
+float3 computeCov2D(const float3 mean, float focal_x, float focal_y, float tan_fovx, float tan_fovy, const float3 diag, float3 Offdiag, float4x4 viewmatrix)
+{
+    // The following models the steps outlined by equations 29
+    // and 31 in "EWA Splatting" (Zwicker et al., 2002).
+    // Additionally considers aspect / scaling of viewport.
+    // Transposes used to account for row-/column-major conventions.
+    // viewmatrix = transpose(viewmatrix);
+    float3 t = mul(viewmatrix, float4(mean, 1.0f)).xyz;
+
+    const float limx = 1.3f * tan_fovx;
+    const float limy = 1.3f * tan_fovy;
+    const float txtz = t.x / t.z;
+    const float tytz = t.y / t.z;
+    t.x = min(limx, max(-limx, txtz)) * t.z;
+    t.y = min(limy, max(-limy, tytz)) * t.z;
+
+    float3x3 J = float3x3(
+		focal_x / t.z, 0.0f, -(focal_x * t.x) / (t.z * t.z),
+		0.0f, focal_y / t.z, -(focal_y * t.y) / (t.z * t.z),
+		0, 0, 0);
+
+    float3x3 W = float3x3(
+        viewmatrix[0][0], viewmatrix[0][1], viewmatrix[0][2],
+        viewmatrix[1][0], viewmatrix[1][1], viewmatrix[1][2],
+        viewmatrix[2][0], viewmatrix[2][1], viewmatrix[2][2] );
+
+    float3x3 T = W * J;
+
+    float3x3 Vrk = float3x3(
+		diag[0], Offdiag[0], Offdiag[1],
+		Offdiag[0], diag[1], Offdiag[2],
+		Offdiag[1], Offdiag[2], diag[2]);
+
+    float3x3 cov = transpose(T) * transpose(Vrk) * T;
+
+    // Apply low-pass filter: every Gaussian should be at least
+    // one pixel wide/high. Discard 3rd row and column.
+    cov[0][0] += 0.3f;
+    cov[1][1] += 0.3f;
+    return { float(cov[0][0]), float(cov[0][1]), float(cov[1][1]) };
+}
+
+bool intersectGauss(float3 origin, float3 dir, float3 mu, float3x3 cov, out float t, out float d)
+{
+    float3x3 covInv = inverse(cov);
+
+    float3 muDelta = mu - origin;
+
+    t = mul(mul(muDelta, covInv), dir) / mul(mul(dir, covInv), dir);
+
+    float3 hitpos = origin + t * dir;
+
+    float mdistance = mul(mul(hitpos - mu, covInv), hitpos - mu);
+
+    d = mdistance;
+
+    if (mdistance < 0.2f)
+    {
+        return true;
+    }
+    return false;
+}
 
 [shader("intersection")]
 void intersectSphere()
 {
     const GeometryInstanceID instanceID = getGeometryInstanceID();
+    CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(instanceID);
+    GaussMaterialData data = reinterpret<GaussMaterialData, MaterialPayload>(gScene.materials.getMaterialDataBlob(desc.materialID).payload);
+
     AABB aabb = gScene.getCustomPrimitiveAABB(instanceID);
+    float3 diag = data.covDiag;
+    float3 offDiag = data.covOffDiag;
+    float3x3 covariance = float3x3(diag.x, offDiag.x, offDiag.y,
+                                   offDiag.x, diag.y, offDiag.z,
+                                   offDiag.y, offDiag.z, diag.z);
+    float t;
+    float d;
+    bool isect = intersectGauss(WorldRayOrigin(), WorldRayDirection(), aabb.center(), covariance, t, d);
+
 
     // Inscribed sphere radius
     float3 e = aabb.extent();
     float radius = min(e.x, min(e.y, e.z)) * 0.5f;
-    float t;
-    bool isect = intersectRaySphere(WorldRayOrigin(), WorldRayDirection(), aabb.center(), radius, t);
+
+    // isect = intersectRaySphere(WorldRayOrigin(), WorldRayDirection(), aabb.center(), radius, t);
     if (isect && t < RayTCurrent())
     {
         MyIntersectionAttribs attribs;
         attribs.t = t;
+        attribs.d = d;
         ReportHit(t.x, 0, attribs);
     }
 }
@@ -653,19 +743,108 @@ void intersectSphere()
 [shader("closesthit")]
 void closestHitSphereAttrib(inout ScatterRayData rayData, MyIntersectionAttribs attribs)
 {
-    const GeometryInstanceID instanceID = getGeometryInstanceID();
-    CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(instanceID);
+    // const GeometryInstanceID instanceID = getGeometryInstanceID();
+    // CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(instanceID);
+    // GaussMaterialData data = reinterpret<GaussMaterialData, MaterialPayload>(gScene.materials.getMaterialDataBlob(desc.materialID).payload);
 
-    rayData.radiance = float3(desc.userID / 255, 0.0f, 0.0f);
+    // rayData.radiance += data.baseColor * (0.2 - attribs.d) * 2;
+    // rayData.radiance += float3(0.1f, 0.0f, 0.0f);
     // rayData.radiance += float3(0.1f);
-    rayData.radiance += desc.color;
-
-
+    // rayData.radiance += desc.color;
 }
 
-// [shader("anyhit")]
-// void anyHitSphereAttrib(inout ScatterRayData rayData, MyIntersectionAttribs attribs)
-// {
-//     // rayData.thp = RayTCurrent();
-//     rayData.radiance += float3(1.0f, 1.f, 1.f);
-// }
+[shader("anyhit")]
+void anyHitSphereAttrib(inout ScatterRayData rayData, MyIntersectionAttribs attribs)
+{
+    // // rayData.thp = RayTCurrent();
+    const GeometryInstanceID instanceID = getGeometryInstanceID();
+    CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(instanceID);
+    GaussMaterialData data = reinterpret<GaussMaterialData, MaterialPayload>(gScene.materials.getMaterialDataBlob(desc.materialID).payload);
+    uint2 frameDim = DispatchRaysDimensions().xy;
+
+
+    float focalX = 1920 / (2.0f * gScene.camera.getTanFovX());
+    float focalY = 1080 / (2.0f * gScene.camera.getTanFovY());
+    AABB aabb = gScene.getCustomPrimitiveAABB(instanceID);
+
+    // float3x4 viewMatrix = float3x4(
+    //     gScene.camera.getView()[0],
+    //     gScene.camera.getView()[1],
+    //     gScene.camera.getView()[2]
+    // );
+    // float4x4 viewMatrix = gScene.camera.getView();
+    // float3 rayDir = mul(viewMatrix, float4(WorldRayDirection(), 0.0f)).xyz;
+    // float3 gaussDir = mul(viewMatrix, float4(normalize(aabb.center() - WorldRayOrigin()), 0.0f)).xyz;
+
+    // float t2ZnearCam = (gScene.camera.getNearZ()) / rayDir.z;
+    // float t2ZnearGauss = (gScene.camera.getNearZ()) / gaussDir.z;
+
+    // float3 rayScreen = (mul(viewMatrix, float4(WorldRayOrigin(), 1.0f)).xyz + rayDir * t2ZnearCam);
+    // float3 gaussScreen = (mul(viewMatrix, float4(WorldRayOrigin(), 1.0f)).xyz + gaussDir * t2ZnearGauss);
+
+    // float4x4 viewProj = gScene.camera.getViewProj();
+    // float4x4 Proj = gScene.camera.getProj();
+
+    // float2 xyRayScreen = mul(Proj, float4(rayScreen, 1.0f)).xy;
+    // float2 xyGaussScreen = mul(Proj, float4(gaussScreen, 1.0f)).xy;
+
+    // float2 d = xyGaussScreen - xyRayScreen;
+
+    // d *= frameDim;
+
+    float3 gaussPos = aabb.center();
+    float3 rayPos = WorldRayOrigin() + 10.0f * WorldRayDirection();
+
+    float4 gaussPosNdc = mul(gScene.camera.getViewProj(), float4(gaussPos, 1.0f));
+    float4 rayPosNdc = mul(gScene.camera.getViewProj(), float4(rayPos, 1.0f));
+
+    float2 d = (gaussPosNdc.xy / gaussPosNdc.w) - (rayPosNdc.xy / rayPosNdc.w);
+
+    d *= float2(1920, 1080);
+
+    float4x4 viewMatrix = gScene.camera.getView();
+
+
+
+    float3 cov = computeCov2D(  aabb.center(), focalX, focalY,
+                                gScene.camera.getTanFovX(), gScene.camera.getTanFovY(),
+                                data.covDiag, data.covOffDiag, viewMatrix );
+
+    float det = (cov.x * cov.z - cov.y * cov.y);
+    if (det == 0.0f)
+    {
+        IgnoreHit();
+        return;
+    }
+
+    float det_inv = 1.f / det;
+    float3 conic = { cov.z * det_inv, -cov.y * det_inv, cov.x * det_inv };
+
+    // float4 dWorld = float4(attribs.d.x, attribs.d.y, attribs.d.z, 0.0);
+
+    float4 con_o = float4(conic.x, conic.y, conic.z, data.alpha );
+    float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+
+    if (power > 0.0f)
+    {
+        IgnoreHit();
+        return;
+    }
+
+    // Eq. (2) from 3D Gaussian splatting paper.
+    // Obtain alpha by multiplying with Gaussian opacity
+    // and its exponential falloff from mean.
+    // Avoid numerical instabilities (see paper appendix).
+
+    float alpha = min(0.99f, con_o.w * exp(power));
+    alpha = data.alpha * exp(-10 * attribs.d);
+    rayData.radiance += data.baseColor * rayData.thp * alpha;
+    // rayData.radiance += float3(gaussPosNdc.xy, 0.0f);
+    rayData.thp *= (1 - alpha);
+    // rayData.radiance += float3(0.0f, 0.1f, 0.0f);
+    // // rayData.radiance += float3(0.1f);
+
+    if (any(rayData.thp < float3(0.00001f)))
+        AcceptHitAndEndSearch();
+    IgnoreHit();
+}

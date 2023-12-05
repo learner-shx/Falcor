@@ -35,7 +35,12 @@ struct Camera
 
     float3 getPosition() { return data.posW; }
     float4x4 getViewProj() { return data.viewProjMat; }
-
+    float4x4 getView() { return data.viewMat; }
+    float4x4 getProj() { return data.projMat; }
+    float getFocalDistance() { return data.focalDistance;}
+    float getTanFovX() { return data.focalLength / data.frameWidth / 2; }
+    float getTanFovY() { return data.focalLength / data.frameWidth / 2; }
+    float getNearZ() { return data.nearZ; }
     /** Computes a camera ray for a given pixel assuming a pinhole camera model.
         The camera jitter is taken into account to compute the sample position on the image plane.
         \param[in] pixel Pixel coordinates with origin in top-left.

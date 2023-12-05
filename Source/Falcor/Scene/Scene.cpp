@@ -2643,6 +2643,30 @@ namespace Falcor
         desc.userID = userID;
         desc.aabbOffset = (uint32_t)mCustomPrimitiveAABBs.size();
         desc.color = float3(0.5f, 0.2f, 0.1f);
+        desc.materialID = 0;
+
+        mCustomPrimitiveDesc.push_back(desc);
+        mCustomPrimitiveAABBs.push_back(aabb);
+        mCustomPrimitivesChanged = true;
+
+        return index;
+    }
+    uint32_t Scene::addCustomPrimitiveWithMaterial(uint32_t userID, const AABB& aabb, const ref<Material>& pMaterial)
+    {
+        // Currently each custom primitive has exactly one AABB. This may change in the future.
+        FALCOR_ASSERT(mCustomPrimitiveDesc.size() == mCustomPrimitiveAABBs.size());
+        if (mCustomPrimitiveAABBs.size() > std::numeric_limits<uint32_t>::max())
+        {
+            FALCOR_THROW("Custom primitive count exceeds the maximum");
+        }
+
+        const uint32_t index = (uint32_t)mCustomPrimitiveDesc.size();
+
+        CustomPrimitiveDesc desc = {};
+        desc.userID = userID;
+        desc.aabbOffset = (uint32_t)mCustomPrimitiveAABBs.size();
+        desc.color = float3(0.5f, 0.2f, 0.1f);
+        desc.materialID = addMaterial(pMaterial).getSlang();
 
         mCustomPrimitiveDesc.push_back(desc);
         mCustomPrimitiveAABBs.push_back(aabb);

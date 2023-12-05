@@ -125,6 +125,7 @@ private:
             { MaterialType::PBRTCoatedConductor, "PBRTCoatedConductor" },
             { MaterialType::PBRTCoatedDiffuse, "PBRTCoatedDiffuse" },
             { MaterialType::RGL, "RGL" },
+            { MaterialType::Gauss, "Gauss"},
         };
 
         for (const auto& [type, name] : mMaterialType2Name)
