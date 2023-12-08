@@ -33,7 +33,7 @@
 #include <random>
 
 
-const char kShaderFilename[] = "RenderPasses/TestGauss/TestGauss.rt.slang";
+const char kShaderFilename[] = "RenderPasses/TestGauss/TestGaussPathTracer.rt.slang";
 
 // Ray tracing settings that affect the traversal stack size.
 // These should be set as small as possible.
@@ -56,9 +56,27 @@ const ChannelList kOutputChannels = {
     // clang-format on
 };
 
-const char kMaxBounces[] = "maxBounces";
 const char kComputeDirect[] = "computeDirect";
 const char kUseImportanceSampling[] = "useImportanceSampling";
+
+const std::string kSamplesPerPixel = "samplesPerPixel";
+const std::string kMaxBounces = "maxBounces";
+
+const std::string kDiffMode = "diffMode";
+const std::string kDiffVarName = "diffVarName";
+
+const std::string kSampleGenerator = "sampleGenerator";
+const std::string kFixedSeed = "fixedSeed";
+const std::string kUseBSDFSampling = "useBSDFSampling";
+const std::string kUseNEE = "useNEE";
+const std::string kUseMIS = "useMIS";
+
+const std::string kUseWAR = "useWAR";
+const std::string kAuxSampleCount = "auxSampleCount";
+const std::string kLog10vMFConcentration = "Log10vMFConcentration";
+const std::string kLog10vMFConcentrationScreen = "Log10vMFConcentrationScreen";
+const std::string kBoundaryTermBeta = "boundaryTermBeta";
+const std::string kUseAntitheticSampling = "useAntitheticSampling";
 
 std::mt19937 rng;
 
@@ -87,12 +105,49 @@ void TestGauss::parseProperties(const Properties& props)
 {
     for (const auto& [key, value] : props)
     {
-        if (key == kMaxBounces)
-            mMaxBounces = value;
-        else if (key == kComputeDirect)
+        if (key == kComputeDirect)
             mComputeDirect = value;
         else if (key == kUseImportanceSampling)
             mUseImportanceSampling = value;
+
+        else if (key == kSamplesPerPixel)
+            mStaticParams.samplesPerPixel = value;
+        else if (key == kMaxBounces)
+            mStaticParams.maxBounces = value;
+        // Differentiable rendering parameters
+        else if (key == kDiffMode)
+            mStaticParams.diffMode = value;
+        else if (key == kDiffVarName)
+            mStaticParams.diffVarName = value.operator std::string();
+
+        // Sampling parameters
+        else if (key == kSampleGenerator)
+            mStaticParams.sampleGenerator = value;
+        else if (key == kFixedSeed)
+        {
+            mParams.fixedSeed = value;
+            mParams.useFixedSeed = true;
+        }
+        else if (key == kUseBSDFSampling)
+            mStaticParams.useBSDFSampling = value;
+        else if (key == kUseNEE)
+            mStaticParams.useNEE = value;
+        else if (key == kUseMIS)
+            mStaticParams.useMIS = value;
+
+        // WAR parameters
+        else if (key == kUseWAR)
+            mStaticParams.useWAR = value;
+        else if (key == kAuxSampleCount)
+            mStaticParams.auxSampleCount = value;
+        else if (key == kLog10vMFConcentration)
+            mStaticParams.log10vMFConcentration = value;
+        else if (key == kLog10vMFConcentrationScreen)
+            mStaticParams.log10vMFConcentrationScreen = value;
+        else if (key == kBoundaryTermBeta)
+            mStaticParams.boundaryTermBeta = value;
+        else if (key == kUseAntitheticSampling)
+            mStaticParams.useAntitheticSampling = value;
         else
             logWarning("Unknown field `" + key + "` in TestGauss pass");
     }
@@ -100,9 +155,32 @@ void TestGauss::parseProperties(const Properties& props)
 Properties TestGauss::getProperties() const
 {
     Properties props;
-    props[kMaxBounces] = mMaxBounces;
     props[kComputeDirect] = mComputeDirect;
     props[kUseImportanceSampling] = mUseImportanceSampling;
+
+    // Rendering parameters
+    props[kSamplesPerPixel] = mStaticParams.samplesPerPixel;
+    props[kMaxBounces] = mStaticParams.maxBounces;
+
+    // Differentiable rendering parameters
+    props[kDiffMode] = mStaticParams.diffMode;
+    props[kDiffVarName] = mStaticParams.diffVarName;
+
+    // Sampling parameters
+    props[kSampleGenerator] = mStaticParams.sampleGenerator;
+    if (mParams.useFixedSeed)
+        props[kFixedSeed] = mParams.fixedSeed;
+    props[kUseBSDFSampling] = mStaticParams.useBSDFSampling;
+    props[kUseNEE] = mStaticParams.useNEE;
+    props[kUseMIS] = mStaticParams.useMIS;
+
+    // WAR parameters
+    props[kUseWAR] = mStaticParams.useWAR;
+    props[kAuxSampleCount] = mStaticParams.auxSampleCount;
+    props[kLog10vMFConcentration] = mStaticParams.log10vMFConcentration;
+    props[kLog10vMFConcentrationScreen] = mStaticParams.log10vMFConcentrationScreen;
+    props[kBoundaryTermBeta] = mStaticParams.boundaryTermBeta;
+    props[kUseAntitheticSampling] = mStaticParams.useAntitheticSampling;
     return props;
 }
 
@@ -381,6 +459,47 @@ void TestGauss::renderUI(Gui::Widgets& widget)
     //     }
     // }
 
+}
+
+DefineList TestGauss::StaticParams::getDefines(const TestGauss& owner) const
+{
+    DefineList defines;
+
+    defines.add("SAMPLES_PER_PIXEL", std::to_string(samplesPerPixel));
+    defines.add("MAX_BOUNCES", std::to_string(maxBounces));
+
+    defines.add("DIFF_MODE", std::to_string((uint32_t)diffMode));
+    defines.add(diffVarName);
+
+    defines.add("USE_BSDF_SAMPLING", useBSDFSampling ? "1" : "0");
+    defines.add("USE_NEE", useNEE ? "1" : "0");
+    defines.add("USE_MIS", useMIS ? "1" : "0");
+
+    // WAR parameters configuration.
+    defines.add("USE_WAR", useWAR ? "1" : "0");
+    defines.add("AUX_SAMPLE_COUNT", std::to_string(auxSampleCount));
+    defines.add("LOG10_VMF_CONCENTRATION", std::to_string(log10vMFConcentration));
+    defines.add("LOG10_VMF_CONCENTRATION_SCREEN", std::to_string(log10vMFConcentrationScreen));
+    defines.add("BOUNDARY_TERM_BETA", std::to_string(boundaryTermBeta));
+    defines.add("USE_ANTITHETIC_SAMPLING", useAntitheticSampling ? "1" : "0");
+    defines.add("HARMONIC_GAMMA", std::to_string(harmonicGamma));
+
+    // Sampling utilities configuration.
+    FALCOR_ASSERT(owner.mpSampleGenerator);
+    defines.add(owner.mpSampleGenerator->getDefines());
+
+    if (owner.mpEmissiveSampler)
+        defines.add(owner.mpEmissiveSampler->getDefines());
+
+    // Scene-specific configuration.
+    const auto& scene = owner.mpScene;
+    if (scene)
+        defines.add(scene->getSceneDefines());
+    defines.add("USE_ENV_LIGHT", scene && scene->useEnvLight() ? "1" : "0");
+    defines.add("USE_ANALYTIC_LIGHTS", scene && scene->useAnalyticLights() ? "1" : "0");
+    defines.add("USE_EMISSIVE_LIGHTS", scene && scene->useEmissiveLights() ? "1" : "0");
+
+    return defines;
 }
 
 void TestGauss::addRandomGauss()

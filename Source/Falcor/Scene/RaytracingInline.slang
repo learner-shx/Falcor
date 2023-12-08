@@ -89,6 +89,7 @@ bool traceSceneRayImpl<let Flags : int>(const bool useAlphaTest, inout RayQuery<
     CurveIntersector::Attribs curveCommittedAttribs;
     DisplacedTriangleMeshIntersector::Attribs displacedTriangleMeshCommittedAttribs;
     SDFGridHitData sdfGridCommittedHitData;
+    GaussIntersector::Attribs gaussCommittedAttribs;
 
     while (rayQuery.Proceed())
     {
@@ -136,6 +137,19 @@ bool traceSceneRayImpl<let Flags : int>(const bool useAlphaTest, inout RayQuery<
                     {
                         rayQuery.CommitProceduralPrimitiveHit(t);
                         curveCommittedAttribs = attribs;
+                    }
+                }
+                break;
+#endif
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
+                case GeometryType::Custom:
+                {
+                    GaussIntersector::Attribs attribs;
+                    float t;
+                    if (GaussIntersector::intersect(raySegment, instanceID, primitiveIndex, attribs, t))
+                    {
+                        rayQuery.CommitProceduralPrimitiveHit(t);
+                        gaussCommittedAttribs = attribs;
                     }
                 }
                 break;
@@ -202,6 +216,18 @@ bool traceSceneRayImpl<let Flags : int>(const bool useAlphaTest, inout RayQuery<
                 hitT = rayQuery.CommittedRayT();
                 return true;
 
+            }
+#endif
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
+        case GeometryType::Custom:
+            {
+                GaussHit gaussHit;
+                GaussHit.instanceID = instanceID;
+                GaussHit.primitiveIndex = primitiveIndex;
+                GaussHit.barycentrics = gaussCommittedAttribs.barycentrics;
+                hit = HitInfo(gaussHit);
+                hitT = rayQuery.CommittedRayT();
+                return true;
             }
 #endif
 #if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_SDF_GRID)
@@ -295,6 +321,18 @@ bool traceSceneVisibilityRayImpl<let Flags : int>(const bool useAlphaTest, inout
                     CurveIntersector::Attribs attribs;
                     float t;
                     if (CurveIntersector::intersect(raySegment, instanceID, primitiveIndex, attribs, t))
+                    {
+                        rayQuery.CommitProceduralPrimitiveHit(t);
+                    }
+                }
+                break;
+#endif
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
+                case GeometryType::Custom:
+                {
+                    GaussIntersector::Attribs attribs;
+                    float t;
+                    if (GaussIntersector::intersect(raySegment, instanceID, primitiveIndex, attribs, t))
                     {
                         rayQuery.CommitProceduralPrimitiveHit(t);
                     }

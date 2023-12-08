@@ -687,27 +687,6 @@ float3 computeCov2D(const float3 mean, float focal_x, float focal_y, float tan_f
     return { float(cov[0][0]), float(cov[0][1]), float(cov[1][1]) };
 }
 
-bool intersectGauss(float3 origin, float3 dir, float3 mu, float3x3 cov, out float t, out float d)
-{
-    float3x3 covInv = inverse(cov);
-
-    float3 muDelta = mu - origin;
-
-    t = mul(mul(muDelta, covInv), dir) / mul(mul(dir, covInv), dir);
-
-    float3 hitpos = origin + t * dir;
-
-    float mdistance = mul(mul(hitpos - mu, covInv), hitpos - mu);
-
-    d = mdistance;
-
-    if (mdistance < 0.2f)
-    {
-        return true;
-    }
-    return false;
-}
-
 [shader("intersection")]
 void intersectSphere()
 {
@@ -740,6 +719,7 @@ void intersectSphere()
     }
 }
 
+
 [shader("closesthit")]
 void closestHitSphereAttrib(inout ScatterRayData rayData, MyIntersectionAttribs attribs)
 {
@@ -753,6 +733,15 @@ void closestHitSphereAttrib(inout ScatterRayData rayData, MyIntersectionAttribs 
     // rayData.radiance += desc.color;
 }
 
+[Differentiable]
+[PreferRecompute]
+IMaterialInstance getDiffMaterialInstance(out DiffMaterialData diffData, const ShadingData sd, const ITextureSampler lod)
+{
+    let material = gScene.materials.getMaterial(sd.materialID);
+    let mi = material.setupDiffMaterialInstance(diffData, gScene.materials, sd, lod);
+    return mi;
+}
+
 [shader("anyhit")]
 void anyHitSphereAttrib(inout ScatterRayData rayData, MyIntersectionAttribs attribs)
 {
@@ -760,85 +749,26 @@ void anyHitSphereAttrib(inout ScatterRayData rayData, MyIntersectionAttribs attr
     const GeometryInstanceID instanceID = getGeometryInstanceID();
     CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(instanceID);
     GaussMaterialData data = reinterpret<GaussMaterialData, MaterialPayload>(gScene.materials.getMaterialDataBlob(desc.materialID).payload);
-    uint2 frameDim = DispatchRaysDimensions().xy;
 
+    float3 posW = WorldRayOrigin() + attribs.t * WorldRayDirection();
+    let lod = ExplicitLodTextureSampler(0.f);
 
-    float focalX = 1920 / (2.0f * gScene.camera.getTanFovX());
-    float focalY = 1080 / (2.0f * gScene.camera.getTanFovY());
-    AABB aabb = gScene.getCustomPrimitiveAABB(instanceID);
+    ShadingData sd = gScene.materials.prepareShadingData(posW, desc.materialID, -WorldRayDirection(), lod);
 
-    // float3x4 viewMatrix = float3x4(
-    //     gScene.camera.getView()[0],
-    //     gScene.camera.getView()[1],
-    //     gScene.camera.getView()[2]
-    // );
-    // float4x4 viewMatrix = gScene.camera.getView();
-    // float3 rayDir = mul(viewMatrix, float4(WorldRayDirection(), 0.0f)).xyz;
-    // float3 gaussDir = mul(viewMatrix, float4(normalize(aabb.center() - WorldRayOrigin()), 0.0f)).xyz;
+    DiffMaterialData diffData = DiffMaterialData();
 
-    // float t2ZnearCam = (gScene.camera.getNearZ()) / rayDir.z;
-    // float t2ZnearGauss = (gScene.camera.getNearZ()) / gaussDir.z;
+    let mi = getDiffMaterialInstance(diffData, sd, lod);
 
-    // float3 rayScreen = (mul(viewMatrix, float4(WorldRayOrigin(), 1.0f)).xyz + rayDir * t2ZnearCam);
-    // float3 gaussScreen = (mul(viewMatrix, float4(WorldRayOrigin(), 1.0f)).xyz + gaussDir * t2ZnearGauss);
+    float3 radiance = mi.evalAD(diffData, sd, WorldRayDirection(), rayData.sg);
 
-    // float4x4 viewProj = gScene.camera.getViewProj();
-    // float4x4 Proj = gScene.camera.getProj();
-
-    // float2 xyRayScreen = mul(Proj, float4(rayScreen, 1.0f)).xy;
-    // float2 xyGaussScreen = mul(Proj, float4(gaussScreen, 1.0f)).xy;
-
-    // float2 d = xyGaussScreen - xyRayScreen;
-
-    // d *= frameDim;
-
-    float3 gaussPos = aabb.center();
-    float3 rayPos = WorldRayOrigin() + 10.0f * WorldRayDirection();
-
-    float4 gaussPosNdc = mul(gScene.camera.getViewProj(), float4(gaussPos, 1.0f));
-    float4 rayPosNdc = mul(gScene.camera.getViewProj(), float4(rayPos, 1.0f));
-
-    float2 d = (gaussPosNdc.xy / gaussPosNdc.w) - (rayPosNdc.xy / rayPosNdc.w);
-
-    d *= float2(1920, 1080);
-
-    float4x4 viewMatrix = gScene.camera.getView();
+    // float3 radiance = float3(diffData.data[1], diffData.data[2], diffData.data[3]);
 
 
 
-    float3 cov = computeCov2D(  aabb.center(), focalX, focalY,
-                                gScene.camera.getTanFovX(), gScene.camera.getTanFovY(),
-                                data.covDiag, data.covOffDiag, viewMatrix );
+    float alpha = data.alpha * exp(-10 * attribs.d);
+    rayData.radiance += dColor * rayData.thp * alpha;
+    // rayData.radiance += radiance;
 
-    float det = (cov.x * cov.z - cov.y * cov.y);
-    if (det == 0.0f)
-    {
-        IgnoreHit();
-        return;
-    }
-
-    float det_inv = 1.f / det;
-    float3 conic = { cov.z * det_inv, -cov.y * det_inv, cov.x * det_inv };
-
-    // float4 dWorld = float4(attribs.d.x, attribs.d.y, attribs.d.z, 0.0);
-
-    float4 con_o = float4(conic.x, conic.y, conic.z, data.alpha );
-    float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
-
-    if (power > 0.0f)
-    {
-        IgnoreHit();
-        return;
-    }
-
-    // Eq. (2) from 3D Gaussian splatting paper.
-    // Obtain alpha by multiplying with Gaussian opacity
-    // and its exponential falloff from mean.
-    // Avoid numerical instabilities (see paper appendix).
-
-    float alpha = min(0.99f, con_o.w * exp(power));
-    alpha = data.alpha * exp(-10 * attribs.d);
-    rayData.radiance += data.baseColor * rayData.thp * alpha;
     // rayData.radiance += float3(gaussPosNdc.xy, 0.0f);
     rayData.thp *= (1 - alpha);
     // rayData.radiance += float3(0.0f, 0.1f, 0.0f);

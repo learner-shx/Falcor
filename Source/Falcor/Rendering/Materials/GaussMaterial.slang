@@ -27,7 +27,9 @@
  **************************************************************************/
 __exported import Rendering.Materials.IMaterial;
 __exported import Rendering.Materials.GaussMaterialInstance;
+import Scene.Material.StandardMaterialParamLayout;
 import Scene.Material.GaussMaterialData;
+import Scene.Material.ShadingUtils;
 
 /** Implementation of measured MERL material.
  */
@@ -70,7 +72,19 @@ struct GaussMaterial : MaterialBase, IMaterial
     [Differentiable]
     GaussMaterialInstance setupDiffMaterialInstance(out DiffMaterialData diffData, const MaterialSystem ms, const ShadingData sd, const ITextureSampler lod, const uint hints)
     {
-        diffData = DiffMaterialData();
-        return no_diff setupMaterialInstance(ms, sd, lod, hints);
+        ShadingFrame sf = sd.frame;
+        flipShadingNormal(sd, sf);
+        if (isAdjustShadingNormalEnabled(hints))
+        {
+            adjustShadingNormal(sd, sf);
+        }
+
+        uint offset = 0;
+        diffData.write(data.alpha, offset); // offset 0
+        diffData.write(data.baseColor, offset); // offset 1 2 3
+        diffData.write(data.covDiag, offset); // offset 4 5 6
+        diffData.write(data.covOffDiag, offset); // offset 7 8 9
+
+        return GaussMaterialInstance(sf);
     }
 };

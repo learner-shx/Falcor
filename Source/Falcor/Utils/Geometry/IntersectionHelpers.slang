@@ -313,3 +313,38 @@ bool intersectLinearSweptSphereHan19(
     result.x += t0;
     return (result.x < FLT_MAX);
 }
+
+/**
+ * Ray intersection against linear swept sphere based on [Han et al. 2019], Ray Tracing Generalized Tube Primitives: Method and
+ * Applications. Paper link: http://www.sci.utah.edu/publications/Han2019a/tubes-final.pdf
+ * @param[in] origin Ray origin position.
+ * @param[in] dir Unit ray direction vector.
+ * @param[in] mu Gauss mean.
+ * @param[in] cov Gauss covariance.
+ * @param[out] t Intersection distance.
+ * @param[out] d Distance to the Gauss mean.
+ * @return True if the ray intersects the linear swept sphere segment.
+ */
+
+bool intersectGauss(float3 origin, float3 dir, float3 mu, float3x3 cov, out float t, out float d)
+{
+    float3x3 covInv = inverse(cov);
+
+    float3 muDelta = mu - origin;
+
+    t = mul(mul(muDelta, covInv), dir) / mul(mul(dir, covInv), dir);
+
+    float3 hitpos = origin + t * dir;
+
+    float mdistance = mul(mul(hitpos - mu, covInv), hitpos - mu);
+
+    d = mdistance;
+
+    if (mdistance < 0.2f)
+    {
+        return true;
+    }
+    return false;
+}
+
+

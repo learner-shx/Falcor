@@ -105,4 +105,22 @@ extension MaterialSystem
 
         return sd;
     }
+
+    ShadingData prepareShadingData<L : ITextureSampler>(const float3 posW, const uint materialID, const float3 viewDir, L lod)
+    {
+        ShadingData sd = {};
+
+        sd.posW = posW;
+        sd.V = viewDir;
+
+        // Material data
+        sd.mtl = materialData[materialID].header;
+        sd.materialID = materialID;
+
+        // Assume the default IoR for vacuum on the front-facing side.
+        // The renderer may override this for nested dielectrics.
+        sd.IoR = 1.f;
+
+        return sd;
+    }
 }

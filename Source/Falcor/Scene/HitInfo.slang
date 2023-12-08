@@ -189,6 +189,36 @@ struct CurveHit : GeometryHit
     }
 };
 
+/** Gauss hit information.
+
+    Encoding:
+    | header  | barycentrics.x | barycentrics.y |
+    | 64 bits | 32 bit float   | 32 bit float   |
+*/
+struct GaussHit : GeometryHit
+{
+    __init(const PackedHitInfo packed)
+    {
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
+        HitInfo::unpackHeader(packed, instanceID, primitiveIndex);
+        barycentrics.x = asfloat(packed[2]);
+        barycentrics.y = asfloat(packed[3]);
+#else
+        this = {};
+#endif
+    }
+
+    PackedHitInfo pack()
+    {
+        PackedHitInfo packed = {};
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
+        HitInfo::packHeader(packed, HitType::Curve, instanceID, primitiveIndex);
+        packed[2] = asuint(barycentrics.x);
+        packed[3] = asuint(barycentrics.y);
+#endif
+        return packed;
+    }
+};
 
 /** SDF grid hit information.
 
@@ -292,6 +322,7 @@ struct VolumeHit
     }
 };
 
+
 /** Polymorphic hit information type.
 */
 struct HitInfo
@@ -352,6 +383,13 @@ struct HitInfo
         data = curveHit.pack();
     }
 
+    /** Initialize hit info from a gauss hit.
+    \param[in] gaussHit Gauss hit information.
+*/
+    __init(const GaussHit gaussHit)
+    {
+        data = gaussHit.pack();
+    }
 
     /** Initialize hit info from a SDF grid hit.
         \param[in] sdfGridHit Curve hit information.
@@ -397,7 +435,7 @@ struct HitInfo
     DisplacedTriangleHit getDisplacedTriangleHit()
     {
         return DisplacedTriangleHit(data);
-    }
+       }
 
     /** Return the curve hit.
         Only valid if type is HitType::Curve.
@@ -407,6 +445,13 @@ struct HitInfo
         return CurveHit(data);
     }
 
+    /** Return the gauss hit.
+        Only valid if type is HitType::Gauss.
+    */
+    GaussHit getGaussHit()
+    {
+        return GaussHit(data);
+    }
 
     /** Return the SDF grid hit.
         Only valid if type is HitType::SDFGrid.

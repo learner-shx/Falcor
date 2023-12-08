@@ -25,64 +25,29 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-import Scene.Material.ShadingUtils;
+#ifndef SAMPLES_PER_PIXEL
+#error RenderPasses/WARDiffPathTracer/StaticParams.slang is missing defines
+#endif
 
-/**
- * Stores differentiable parameters used for BSDF evaluation.
- */
-struct DiffMaterialData : IDifferentiable
-{
-    static const uint kMaterialParamCount = 20;
+__exported import DiffRendering.SharedTypes;
 
-    ShadingFrame sf;
+static const uint kSamplesPerPixel = SAMPLES_PER_PIXEL;
+static const uint kMaxBounces = MAX_BOUNCES;
 
-    // Material parameters.
-    float data[kMaterialParamCount];
+static const DiffMode kDiffMode = DiffMode(DIFF_MODE);
 
-    [Differentiable]
-    __init()
-    {
-        sf = ShadingFrame.createIdentity();
-        [ForceUnroll]
-        for (uint i = 0; i < kMaterialParamCount; i++)
-            data[i] = 0.f;
-    }
+static const bool kUseBSDFSampling = USE_BSDF_SAMPLING;
+static const bool kUseNEE = USE_NEE;
+static const bool kUseMIS = USE_MIS;
 
-    [Differentiable]
-    float read(inout uint offset) { return data[offset++]; }
+static const bool kUseWAR = USE_WAR;
+static const uint kAuxSampleCount = AUX_SAMPLE_COUNT;
+static const float kLog10vMFConcentration = LOG10_VMF_CONCENTRATION;
+static const float kLog10vMFConcentrationScreen = LOG10_VMF_CONCENTRATION_SCREEN;
+static const float kBoundaryTermBeta = BOUNDARY_TERM_BETA;
+static const bool kUseAntitheticSampling = USE_ANTITHETIC_SAMPLING;
+static const float kHarmonicGamma = HARMONIC_GAMMA;
 
-    [Differentiable]
-    void read(out float value, inout uint offset)
-    {
-        value = read(offset);
-    }
-
-    [Differentiable]
-    void read<let N : int>(out vector<float, N> value, inout uint offset)
-    {
-        [ForceUnroll]
-        for (uint i = 0; i < N; i++)
-            value[i] = read(offset);
-    }
-
-    [Differentiable]
-    vector<float, N> read<let N : int>(inout uint offset)
-    {
-        vector<float, N> value;
-        this.read(value, offset);
-        return value;
-    }
-
-    [mutating]
-    [Differentiable]
-    void write(float value, inout uint offset) { data[offset++] = value; }
-
-    [mutating]
-    [Differentiable]
-    void write<let N : int>(vector<float, N> value, inout uint offset)
-    {
-        [ForceUnroll]
-        for (uint i = 0; i < N; i++)
-            this.write(value[i], offset);
-    }
-};
+static const bool kUseEnvLight = USE_ENV_LIGHT;
+static const bool kUseAnalyticLights = USE_ANALYTIC_LIGHTS;
+static const bool kUseEmissiveLights = USE_EMISSIVE_LIGHTS;

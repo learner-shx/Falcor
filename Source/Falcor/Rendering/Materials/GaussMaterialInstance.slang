@@ -70,8 +70,16 @@ struct GaussMaterialInstance : MaterialInstanceBase, IMaterialInstance
     [Differentiable]
     float3 evalAD<S : ISampleGenerator>(const DiffMaterialData diffData, const ShadingData sd, const float3 wo, inout S sg)
     {
-        return float3(0.f);
+        float3 baseColor;
+        float alpha;
+        uint offset = 0;
+        diffData.read(alpha, offset);
+        diffData.read(baseColor, offset);
+
+        // baseColor = float3(diffData.data[1], diffData.data[2], diffData.data[3]);
+        return baseColor;
     }
+
 
     bool sample<S : ISampleGenerator>(const ShadingData sd, inout S sg, out BSDFSample result, bool useImportanceSampling = true)
     {
@@ -120,6 +128,8 @@ struct GaussMaterialInstance : MaterialInstanceBase, IMaterialInstance
         return woLocal.z * M_1_PI; // pdf = cos(theta) / pi
 #endif
     }
+
+    
 
     BSDFProperties getProperties(const ShadingData sd)
     {

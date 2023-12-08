@@ -27,6 +27,7 @@
  **************************************************************************/
 import Scene.Scene;
 import Scene.Displacement.DisplacementMapping;
+import Scene.Material.GaussMaterialData;
 import Scene.SDFs.SDFGrid;
 import Utils.Geometry.IntersectionHelpers;
 import Utils.Geometry.GeometryHelpers;
@@ -142,6 +143,55 @@ struct CurveIntersector
         }
 
         return false;
+    }
+};
+
+/** Helper for intersecting rays against gauss.
+ */
+struct GaussIntersector
+{
+    static const bool kUseSphereJoints = true;
+
+    /** Intersection attributes.
+     */
+    struct Attribs
+    {
+        float2 barycentrics;
+    }
+
+    /** Intersects a ray with a curve.
+        \param[in] ray Ray in world-space.
+        \param[in] instanceID Geometry instance ID.
+        \param[in] primitiveIndex Primitive index.
+        \param[out] attribs Intersection attributes.
+        \param[out] t Intersection t.
+        \return True if the ray intersects the curve.
+    */
+    static bool intersect(const Ray ray, const GeometryInstanceID instanceID, const uint primitiveIndex, out Attribs attribs, out float t)
+    {
+        attribs = {};
+        t = {};
+
+        CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(instanceID);
+        AABB aabb = gScene.getCustomPrimitiveAABB(instanceID);
+
+        float3 mu = aabb.center();
+
+        GaussMaterialData data = reinterpret<GaussMaterialData, MaterialPayload>(gScene.materials.getMaterialDataBlob(desc.materialID).payload);
+        float3 diag = data.covDiag;
+        float3 offDiag = data.covOffDiag;
+        float3x3 covariance = float3x3(diag.x, offDiag.x, offDiag.y,
+                                   offDiag.x, diag.y, offDiag.z,
+                                   offDiag.y, offDiag.z, diag.z);
+        float d;
+        bool isHit = intersectGauss(ray.origin, ray.dir, mu, covariance, t, d);
+
+        if (isHit)
+        {
+            attribs.barycentrics = float2(d, 0);
+        }
+
+        return isHit;
     }
 };
 

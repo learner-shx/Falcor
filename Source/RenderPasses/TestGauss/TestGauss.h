@@ -28,8 +28,14 @@
 #pragma once
 #include "Falcor.h"
 #include "RenderGraph/RenderPass.h"
+#include "RenderGraph/RenderPassHelpers.h"
 #include "Utils/Sampling/SampleGenerator.h"
+#include "Utils/Debug/PixelDebug.h"
+#include "Rendering/Lights/EmissiveUniformSampler.h"
+#include "DiffRendering/SceneGradients.h"
+#include "DiffRendering/SharedTypes.slang"
 
+#include "Params.slang"
 
 using namespace Falcor;
 
@@ -63,12 +69,71 @@ private:
     void sceneChanged();
     void addRandomGauss();
 
+
+    /**
+     * Static configuration. Changing any of these options require shader recompilation.
+     */
+    struct StaticParams
+    {
+        // Rendering parameters
+
+        /// Number of samples (paths) per pixel, unless a sample density map is used.
+        uint32_t samplesPerPixel = 1;
+        /// Max number of indirect bounces (0 = none).
+        uint32_t maxBounces = 0;
+
+        // Differentiable rendering parameters
+
+        /// Differentiation mode.
+        DiffMode diffMode = DiffMode::ForwardDiffDebug;
+        /// Name of the variable to differentiate. Used for rendering forward-mode gradient images.
+        std::string diffVarName = "";
+
+        // Sampling parameters
+
+        /// Pseudorandom sample generator type.
+        uint32_t sampleGenerator = SAMPLE_GENERATOR_TINY_UNIFORM;
+        /// Use BRDF importance sampling, otherwise cosine-weighted hemisphere sampling.
+        bool useBSDFSampling = true;
+        /// Use next-event estimation (NEE). This enables shadow ray(s) from each path vertex.
+        bool useNEE = true;
+        /// Use multiple importance sampling (MIS) when NEE is enabled.
+        bool useMIS = true;
+
+        // WAR parameters
+
+        /// Use warped-area reparameterization (required if there are geometric discontinuities).
+        bool useWAR = true;
+        /// Number of auxiliary samples per primary sample for warped-area reparameterization.
+        uint32_t auxSampleCount = 16;
+        /// Log10 of the VMF concentration parameter.
+        float log10vMFConcentration = 5.f;
+        /// Log10 of the VMF concentration parameter.
+        float log10vMFConcentrationScreen = 5.f;
+        /// Beta parameter for the boundary term.
+        float boundaryTermBeta = 0.01f;
+        /// Use antithetic sampling for variance reduction.
+        bool useAntitheticSampling = true;
+        /// Gamma parameter for the harmonic weights.
+        float harmonicGamma = 2.f;
+
+        DefineList getDefines(const TestGauss& owner) const;
+    };
+
     // Internal state
 
     /// Current scene.
     ref<Scene> mpScene;
     /// GPU sample generator.
     ref<SampleGenerator> mpSampleGenerator;
+    std::unique_ptr<EmissiveLightSampler> mpEmissiveSampler;
+    std::unique_ptr<PixelDebug> mpPixelDebug;
+
+    ref<SceneGradients> mpSceneGradients;
+    /// Derivatives of loss function w.r.t. image pixel values.
+    ref<Buffer> mpdLdI;
+
+    ref<ParameterBlock> mpDiffPTBlock;
 
     /// UI param.
     uint32_t mSelectedIdx = 0;
