@@ -17,6 +17,37 @@ def render_graph_TestGauss():
     g.markOutput("ToneMapper.dst")
     return g
 
-TestGauss = render_graph_TestGauss()
+def render_graph_TestGaussPT():
+    g = RenderGraph("TestGauss")
+    TestGauss = createPass("TestGauss",
+                                   {
+                                       "maxBounces": 0,
+                                       "samplesPerPixel": 1,
+                                       "diffMode": "Primal",
+                                       "diffVarName": "CBOX_BUNNY_MATERIAL",
+                                    #    "diffVarName": "CBOX_BUNNY_TRANSLATION",
+                                   })
+    g.addPass(TestGauss, "TestGauss")
+
+    AccumulatePassPrimal = createPass("AccumulatePass", {"enabled": True, "precisionMode": "Single"})
+    g.addPass(AccumulatePassPrimal, "AccumulatePassPrimal")
+
+    AccumulatePassDiff = createPass("AccumulatePass", {"enabled": True, 'precisionMode': "Single"})
+    g.addPass(AccumulatePassDiff, "AccumulatePassDiff")
+    ColorMapPassDiff = createPass("ColorMapPass", {"minValue": -4.0, "maxValue": 4.0, "autoRange": False})
+    g.addPass(ColorMapPassDiff, "ColorMapPassDiff")
+
+    g.addEdge("TestGauss.color", "AccumulatePassPrimal.input")
+    g.addEdge("TestGauss.dColor", "AccumulatePassDiff.input")
+    g.addEdge("AccumulatePassDiff.output", "ColorMapPassDiff.input")
+    g.markOutput("AccumulatePassDiff.output")
+    g.markOutput("AccumulatePassPrimal.output")
+    g.markOutput("ColorMapPassDiff.output")
+    return g
+TestGauss = render_graph_TestGaussPT()
 try: m.addGraph(TestGauss)
+
 except NameError: None
+
+flags = SceneBuilderFlags.DontMergeMaterials | SceneBuilderFlags.RTDontMergeDynamic | SceneBuilderFlags.DontOptimizeMaterials
+m.loadScene("test_scenes/testCustom.pyscene", buildFlags=flags)

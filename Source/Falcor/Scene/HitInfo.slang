@@ -201,8 +201,8 @@ struct GaussHit : GeometryHit
     {
 #if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
         HitInfo::unpackHeader(packed, instanceID, primitiveIndex);
-        barycentrics.x = asfloat(packed[2]);
-        barycentrics.y = asfloat(packed[3]);
+        // barycentrics.x = asfloat(packed[2]);
+        // barycentrics.y = asfloat(packed[3]);
 #else
         this = {};
 #endif
@@ -211,11 +211,11 @@ struct GaussHit : GeometryHit
     PackedHitInfo pack()
     {
         PackedHitInfo packed = {};
-#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
-        HitInfo::packHeader(packed, HitType::Curve, instanceID, primitiveIndex);
-        packed[2] = asuint(barycentrics.x);
-        packed[3] = asuint(barycentrics.y);
-#endif
+// #if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
+        HitInfo::packHeader(packed, HitType::Gauss, instanceID, primitiveIndex);
+        // packed[2] = asuint(barycentrics.x);
+        // packed[3] = asuint(barycentrics.y);
+// #endif
         return packed;
     }
 };
@@ -506,6 +506,12 @@ struct HitInfo
 
     static void packHeader(inout PackedHitInfo packed, const HitType type, const GeometryInstanceID instanceID, const uint primitiveIndex)
     {
+        if (type == HitType::Gauss)
+        {
+            packed[0] = 0;
+        }
+
+
         if (kHeaderBits <= 32)
         {
             packed[0] = (uint(type) << kTypeOffset) | (instanceID.index << kInstanceIDOffset) | primitiveIndex;
@@ -515,6 +521,8 @@ struct HitInfo
             packed[0] = (uint(type) << kTypeOffset) | instanceID.index;
             packed[1] = primitiveIndex;
         }
+
+
     }
 
     static void unpackHeader(const PackedHitInfo packed, out GeometryInstanceID instanceID, out uint primitiveIndex)

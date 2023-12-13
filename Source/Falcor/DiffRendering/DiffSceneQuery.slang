@@ -116,6 +116,7 @@ struct SceneQueryAD : IDifferentiable
         if (hitInfo.getType() == HitType::Gauss)
         {
             isect = computeGaussIntersectionAD(hitInfo, rayAD, mode);
+            // isect.triangleID = 0;
             isect.hitT = hitT;
             return true;
         }
@@ -149,8 +150,9 @@ struct SceneQueryAD : IDifferentiable
         {
             float3 barycentrics;
             float t;
-            isect.posW = gScene.getCustomPrimitiveAABB(hit.instanceID).center();
+            isect.posW = no_diff gScene.getCustomPrimitiveAABB(hit.instanceID).center();
             isect.barycentrics = no_diff hit.getBarycentricWeights();
+            isect.triangleID = INT32_MAX;
         }
         else if (mode == DiffIntersectionMode.AttachToGeometry)
         {
@@ -158,12 +160,12 @@ struct SceneQueryAD : IDifferentiable
 
             // Fix barycentrics.
             isect.barycentrics = no_diff(hit.getBarycentricWeights());
-            isect.posW = gScene.getCustomPrimitiveAABB(hit.instanceID).center();
-
+            isect.posW = no_diff gScene.getCustomPrimitiveAABB(hit.instanceID).center();
+            isect.triangleID = INT32_MAX;
             // Compute hit T from posW and ray origin.
             isect.hitT = length(isect.posW - ray.origin);
         }
-        
+
         // Note: We want to pass to vertex positions through shading normals. It hasn't been implemented yet.
         // TODO: Handle shading (vertex) normals correctly.
         // isect.normalW = computeShadingNormal(isect.instanceID, isect.triangleID, isect.barycentrics);

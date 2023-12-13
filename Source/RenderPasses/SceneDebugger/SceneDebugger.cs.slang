@@ -160,6 +160,14 @@ struct SceneDebugger
             v = gScene.getVertexDataFromCurve(curveHit);
             break;
         }
+        case HitType::Gauss:
+        {
+            const GaussHit gaussHit = hit.getGaussHit();
+            instanceID = gaussHit.instanceID.index;
+            geometryID = gScene.getGeometryInstance(gaussHit.instanceID).geometryID;
+            materialID = gScene.getMaterialID(gaussHit.instanceID);
+            break;
+        }
         case HitType::SDFGrid:
         {
             const SDFGridHit sdfGridHit = hit.getSDFGridHit();

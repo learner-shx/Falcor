@@ -598,6 +598,8 @@ struct Scene
             return gScene.getPrevPosW(hit.getDisplacedTriangleHit());
         case HitType::Curve:
             return gScene.getPrevPosWFromCurve(hit.getCurveHit());
+        case HitType::Gauss:
+            return float3(1.0f);
         default:
             return 0.f;
         }

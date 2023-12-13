@@ -222,10 +222,11 @@ bool traceSceneRayImpl<let Flags : int>(const bool useAlphaTest, inout RayQuery<
         case GeometryType::Custom:
             {
                 GaussHit gaussHit;
-                GaussHit.instanceID = instanceID;
-                GaussHit.primitiveIndex = primitiveIndex;
-                GaussHit.barycentrics = gaussCommittedAttribs.barycentrics;
+                gaussHit.instanceID = instanceID;
+                gaussHit.primitiveIndex = primitiveIndex;
+                gaussHit.barycentrics = gaussCommittedAttribs.barycentrics;
                 hit = HitInfo(gaussHit);
+                
                 hitT = rayQuery.CommittedRayT();
                 return true;
             }

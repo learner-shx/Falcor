@@ -38,9 +38,12 @@ import Utils.Math.MathHelpers;
 import Utils.Geometry.GeometryHelpers;
 import Utils.Sampling.SampleGenerator;
 import Utils.Debug.PixelDebug;
+import Utils.Debug.PixelDebugTypes;
 import DiffRendering.SharedTypes;
 import DiffRendering.DiffSceneIO;
 import DiffRendering.DiffSceneQuery;
+
+import Scene.Material.GaussMaterialData;
 
 __exported import StaticParams;
 __exported import Params;
@@ -126,8 +129,10 @@ ShadingData loadShadingData(
     {
         const GaussHit gaussHit = hit.getGaussHit();
         // v = gScene.getVertexData(gaussHit);
-        float3 posW = gScene.getCustomPrimitiveAABB(gaussHit.instanceID).center();
-        materialID = gScene.getMaterialID(isect.instanceID);
+        float3 posW = gScene.getCustomPrimitiveAABB(isect.instanceID).center();
+        CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(isect.instanceID);
+
+        materialID = desc.materialID;
 
         // Overwrite some fields to enable auto-diff.
         sd = no_diff gScene.materials.prepareShadingData(posW, materialID, -rayDir, lod);
@@ -280,68 +285,78 @@ void handleHit(
 )
 {
     let lod = ExplicitLodTextureSampler(0.f);
-
+    HitInfo hit;
+    TriangleHit triHit = { isect.instanceID, isect.triangleID, isect.barycentrics.y, isect.barycentrics.z };
     GaussHit gaussHit = { isect.instanceID, isect.triangleID, isect.barycentrics.y, isect.barycentrics.z };
-    HitInfo hit = HitInfo(gaussHit);
+
+    if(isect.triangleID == INT32_MAX)
+        hit = HitInfo(gaussHit);
+    else
+        hit = HitInfo(triHit);
+    // pathData.radiance += float3(hit.getGaussHit().barycentrics.xy * 0.5f, 0.0f);
 
     // Load shading data.
-    ShadingData sd = loadShadingData(sceneQuery, hit, isect, ray.origin, ray.direction, lod);
+    ShadingData sd;
+
+    sd = loadShadingData(sceneQuery, hit, isect, ray.origin, ray.direction, lod);
 
     // Create differentiable material instance.
-    DiffMaterialData diffData;
+    DiffMaterialData diffData = DiffMaterialData();
     let mi = getDiffMaterialInstance(diffData, sd, lod);
+    float3 radiance = mi.evalAD(diffData, sd, ray.direction, sg);
 
     // Add emitted light.
     const bool isPrimaryHit = pathData.length == 0;
-    // if (isPrimaryHit || kUseEmissiveLights && (!kUseNEE || kUseMIS))
-    // {
-    //     float misWeight = 1.f;
+    if (isPrimaryHit || kUseEmissiveLights && (!kUseNEE || kUseMIS))
+    {
+        float misWeight = 1.f;
 
-    //     if (!isPrimaryHit && kUseEmissiveLights && kUseNEE && kUseMIS)
-    //     {
-    //         // Prepare hit point struct with data needed for emissive light PDF evaluation.
-    //         TriangleLightHit lightHit;
-    //         lightHit.triangleIndex = gScene.lightCollection.getTriangleIndex(gaussHit.instanceID, gaussHit.primitiveIndex);
-    //         lightHit.posW = sd.posW;
-    //         lightHit.normalW = sd.getOrientedFaceNormal();
+        if (!isPrimaryHit && kUseEmissiveLights && kUseNEE && kUseMIS)
+        {
+            // Prepare hit point struct with data needed for emissive light PDF evaluation.
+            TriangleLightHit lightHit;
+            lightHit.triangleIndex = gScene.lightCollection.getTriangleIndex(triHit.instanceID, triHit.primitiveIndex);
+            lightHit.posW = sd.posW;
+            lightHit.normalW = sd.getOrientedFaceNormal();
 
-    //         // Evaluate PDF at the hit, had it been generated with light sampling.
-    //         // Emissive light samplers have an option to exclusively sample the upper hemisphere.
-    //         bool upperHemisphere = true;
-    //         float lightPdf = no_diff emissiveSampler.evalPdf(detach(ray.origin), pathData.normal, upperHemisphere, lightHit);
+            // Evaluate PDF at the hit, had it been generated with light sampling.
+            // Emissive light samplers have an option to exclusively sample the upper hemisphere.
+            bool upperHemisphere = true;
+            float lightPdf = no_diff emissiveSampler.evalPdf(detach(ray.origin), pathData.normal, upperHemisphere, lightHit);
 
-    //         // Compute MIS weight by combining this with BSDF sampling.
-    //         // Note we can assume path.pdf > 0.f since we shouldn't have got here otherwise.
-    //         misWeight = no_diff evalMIS(1, pathData.pdf, 1, lightPdf);
-    //     }
+            // Compute MIS weight by combining this with BSDF sampling.
+            // Note we can assume path.pdf > 0.f since we shouldn't have got here otherwise.
+            misWeight = no_diff evalMIS(1, pathData.pdf, 1, lightPdf);
+        }
 
-    //     // TODO: support differentiable for the emission of lights.
-    //     pathData.radiance += pathData.thp * mi.getProperties(sd).emission * misWeight;
-    // }
+        // TODO: support differentiable for the emission of lights.
+        pathData.radiance += pathData.thp * mi.getProperties(sd).emission * misWeight;
+    }
 
     // Check whether to terminate based on max depth.
+
     if (pathData.length >= kMaxBounces + 1)
     {
         pathData.terminated = true;
         return;
     }
 
-    // // Compute NEE. Assume we only have area lights for now.
-    // if (kUseNEE)
-    // {
-    //     LightSample ls = {};
-    //     bool validSample = generateEmissiveSample(isect, emissiveSampler, true, sg, ls);
-    //     if (validSample)
-    //     {
-    //         Ray shadowRay = ls.getVisibilityRay();
-    //         bool visible = sceneQuery.traceVisibilityRay(shadowRay);
+    // Compute NEE. Assume we only have area lights for now.
+    if (kUseNEE)
+    {
+        LightSample ls = {};
+        bool validSample = generateEmissiveSample(isect, emissiveSampler, true, sg, ls);
+        if (validSample)
+        {
+            Ray shadowRay = ls.getVisibilityRay();
+            bool visible = sceneQuery.traceVisibilityRay(shadowRay);
 
-    //         if (visible)
-    //         {
-    //             computeNEE(sceneQuery, sd, mi, diffData, isect, ls, pathData, sg, shouldReparameterize);
-    //         }
-    //     }
-    // }
+            if (visible)
+            {
+                computeNEE(sceneQuery, sd, mi, diffData, isect, ls, pathData, sg);
+            }
+        }
+    }
 
     // Compute ray origin for new rays spawned from the hit.
     float3 hitPos = isect.posW;
@@ -351,7 +366,26 @@ void handleHit(
 
     // Generate scatter ray for the next path segment.
     // The raygen shader will continue the path based on the returned payload.
-    pathData.radiance += mi.evalAD(diffData, sd, ray.direction, sg);
+    // print("check", isect.instanceID);
+    uint materialID = gScene.getMaterialID(isect.instanceID);
+    GeometryInstanceID idx = GeometryInstanceID(0, 0);
+    idx.index = 0;
+    float3 aabb = no_diff gScene.getCustomPrimitiveAABB(isect.instanceID).center();
+    CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(isect.instanceID);
+
+    // let mi = gScene.materials.getMaterial(desc.materialID);
+
+
+    // if (isect.instanceID.index == 2)
+    //     pathData.radiance += float3(1.0f, 1.0f, 0.0f);
+    // else if (isect.instanceID.index == 0)
+    //     pathData.radiance += float3(1.0f, 0.0f, 0.0f);
+    // else if (isect.instanceID.index == 1)
+    //     pathData.radiance += float3(0.0f, 1.0f, 0.0f);
+    // else if (isect.instanceID.index == 3)
+    //     pathData.radiance += radiance ;
+
+    pathData.radiance += radiance;
     // if (!generateScatterRay(sceneQuery, sd, mi, diffData, isect, ray, pathData, sg))
     // {
     //     pathData.terminated = true;

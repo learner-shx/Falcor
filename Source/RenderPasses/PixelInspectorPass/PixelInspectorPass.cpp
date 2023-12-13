@@ -469,6 +469,9 @@ void PixelInspectorPass::renderUI(Gui::Widgets& widget)
                 case HitType::Curve:
                     hitType = "Curve";
                     break;
+                case HitType::Gauss:
+                    hitType = "Gauss";
+                    break;
                 default:
                     hitType = "Unknown";
                     FALCOR_ASSERT(false);

@@ -82,18 +82,19 @@ float3 tracePath(SceneQueryAD sceneQuery, float2 pixel, no_diff float2 pixelCent
 
     if (!sceneQuery.traceRayInlineAD(ray, isect, SceneQueryAD.DiffIntersectionMode.AttachToRay))
         return pathData.radiance;
+    handleHit(sceneQuery, isect, gDiffPTData.emissiveSampler, pathData, ray, sg);
 
-    [MaxIters(MAX_BOUNCES + 2)]
-    while (!pathData.terminated)
-    {
+    // [MaxIters(MAX_BOUNCES + 2)]
+    // while (!pathData.terminated)
+    // {
 
-        handleHit(sceneQuery, isect, gDiffPTData.emissiveSampler, pathData, ray, sg);
-        if (pathData.terminated)
-            break;
 
-        if (!sceneQuery.traceRayInlineAD(ray, isect, SceneQueryAD.DiffIntersectionMode.AttachToRay))
-            break;
-    }
+        // if (pathData.terminated)
+        //     break;
+
+        // if (!sceneQuery.traceRayInlineAD(ray, isect, SceneQueryAD.DiffIntersectionMode.AttachToRay))
+        //     break;
+    // }
 
     return pathData.radiance;
 }
@@ -126,7 +127,6 @@ float3 tracePaths(SceneQueryAD sceneQuery, uint2 pixel)
 
     // Trace an interior path.
     result += tracePath(sceneQuery, pixelf + jitter2D, pixelf, sg);
-
     return result;
 }
 
@@ -144,6 +144,7 @@ void rayGen()
         // Primal rendering.
         float3 color = tracePaths(sceneQuery, pixel);
         gOutputColor[pixel] = float4(color, 1.f);
+
     }
     else if (kDiffMode == DiffMode::BackwardDiff)
     {

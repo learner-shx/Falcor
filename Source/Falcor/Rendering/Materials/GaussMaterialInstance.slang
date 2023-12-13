@@ -76,7 +76,7 @@ struct GaussMaterialInstance : MaterialInstanceBase, IMaterialInstance
         diffData.read(alpha, offset);
         diffData.read(baseColor, offset);
 
-        // baseColor = float3(diffData.data[1], diffData.data[2], diffData.data[3]);
+        baseColor = float3(diffData.data[1], diffData.data[2], diffData.data[3]);
         return baseColor;
     }
 
@@ -111,6 +111,7 @@ struct GaussMaterialInstance : MaterialInstanceBase, IMaterialInstance
 // #endif
 //         result.lobeType = (uint)LobeType::DiffuseReflection;
 // #endif
+        // result = BSDFSample();
 
         return true;
     }
@@ -129,7 +130,7 @@ struct GaussMaterialInstance : MaterialInstanceBase, IMaterialInstance
 #endif
     }
 
-    
+
 
     BSDFProperties getProperties(const ShadingData sd)
     {

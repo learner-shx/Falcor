@@ -382,6 +382,32 @@ void SceneDebugger::renderPixelDataUI(Gui::Widgets& widget)
         }
         break;
     }
+    case HitType::Gauss:
+    {
+        {
+            std::string text;
+            text += fmt::format("Gauss ID: {}\n", data.geometryID);
+            text += fmt::format("Instance ID: {}\n", data.instanceID);
+            text += fmt::format("Material ID: {}\n", data.materialID);
+            text += fmt::format("BLAS ID: {}\n", data.blasID);
+            widget.text(text);
+            widget.dummy("#spacer2", {1, 10});
+        }
+
+        // Show mesh details.
+        if (auto g = widget.group("Curve info"); g.open())
+        {
+            const auto& curve = mpScene->getCurve(CurveID{data.geometryID});
+            std::string text;
+            text += fmt::format("degree: {}\n", curve.degree);
+            text += fmt::format("vertexCount: {}\n", curve.vertexCount);
+            text += fmt::format("indexCount: {}\n", curve.indexCount);
+            text += fmt::format("vbOffset: {}\n", curve.vbOffset);
+            text += fmt::format("ibOffset: {}\n", curve.ibOffset);
+            g.text(text);
+        }
+        break;
+    }
     case HitType::SDFGrid:
     {
         {

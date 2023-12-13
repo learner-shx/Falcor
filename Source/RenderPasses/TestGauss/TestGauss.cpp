@@ -33,8 +33,8 @@
 #include <random>
 
 
-const char kShaderFilename[] = "RenderPasses/TestGauss/TestGaussPathTracer.rt.slang";
-
+const char kShaderFile[] = "RenderPasses/TestGauss/TestGaussPathTracer.rt.slang";
+// const char kShaderFile[] = "RenderPasses/WARDiffPathTracer/WARDiffPathTracer.rt.slang";
 // Ray tracing settings that affect the traversal stack size.
 // These should be set as small as possible.
 const uint32_t kMaxPayloadSizeBytes = 72u;
@@ -43,18 +43,13 @@ const uint32_t kMaxRecursionDepth = 2u;
 
 const char kInputViewDir[] = "viewW";
 
-const ChannelList kInputChannels = {
-    // clang-format off
-    { "vbuffer",        "gVBuffer",     "Visibility buffer in packed format" },
-    { kInputViewDir,    "gViewW",       "World-space view direction (xyz float format)", true /* optional */ },
-    // clang-format on
-};
+const ChannelList kInputChannels = {};
 
 const ChannelList kOutputChannels = {
-    // clang-format off
-    { "color",          "gOutputColor", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
-    // clang-format on
+    {"color", "gOutputColor", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float},
+    {"dColor", "gOutputDColor", "Output derivatives computed via auto-diff", false, ResourceFormat::RGBA32Float},
 };
+
 
 const char kComputeDirect[] = "computeDirect";
 const char kUseImportanceSampling[] = "useImportanceSampling";
@@ -88,7 +83,19 @@ extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registr
 void TestGauss::registerScriptBindings(pybind11::module& m)
 {
     pybind11::class_<TestGauss, RenderPass, ref<TestGauss>> pass(m, "TestGauss");
+    pass.def_property("scene_gradients", &TestGauss::getSceneGradients, &TestGauss::setSceneGradients);
+    pass.def_property("run_backward", &TestGauss::getRunBackward, &TestGauss::setRunBackward);
+    pass.def_property("dL_dI", &TestGauss::getdLdI, &TestGauss::setdLdI);
     pass.def("addRandomGauss", &TestGauss::addRandomGauss);
+
+    if (!pybind11::hasattr(m, "DiffMode"))
+    {
+        pybind11::enum_<DiffMode> diffMode(m, "DiffMode");
+        diffMode.value("Primal", DiffMode::Primal);
+        diffMode.value("BackwardDiff", DiffMode::BackwardDiff);
+        diffMode.value("ForwardDiffDebug", DiffMode::ForwardDiffDebug);
+        diffMode.value("BackwardDiffDebug", DiffMode::BackwardDiffDebug);
+    }
 }
 
 
@@ -96,9 +103,23 @@ TestGauss::TestGauss(ref<Device> pDevice, const Properties& props) : RenderPass(
 {
     parseProperties(props);
 
-    // Create sample generator.
+    // Create a sample generator.
     mpSampleGenerator = SampleGenerator::create(mpDevice, SAMPLE_GENERATOR_UNIFORM);
+    mpPixelDebug = std::make_unique<PixelDebug>(mpDevice);
+
     FALCOR_ASSERT(mpSampleGenerator);
+
+    // Set differentiable rendering debug parameters if needed.
+    if (mStaticParams.diffVarName == "CBOX_BUNNY_MATERIAL")
+    {
+        // Albedo value with materialID = 0
+        setDiffDebugParams(DiffVariableType::Material, uint2(0, 0), 0, float4(1.f, 1.f, 1.f, 0.f));
+    }
+    else if (mStaticParams.diffVarName == "CBOX_BUNNY_TRANSLATION")
+    {
+        // Vertical translation with meshID = 0
+        setDiffDebugParams(DiffVariableType::GeometryTranslation, uint2(0, 0), 0, float4(0.f, 1.f, 0.f, 0.f));
+    }
 }
 
 void TestGauss::parseProperties(const Properties& props)
@@ -198,78 +219,124 @@ RenderPassReflection TestGauss::reflect(const CompileData& compileData)
     return reflector;
 }
 
-void TestGauss::execute(RenderContext* pRenderContext, const RenderData& renderData)
+TestGauss::TracePass::TracePass(
+    ref<Device> pDevice,
+    const std::string& name,
+    const std::string& passDefine,
+    const ref<Scene>& pScene,
+    const DefineList& defines,
+    const TypeConformanceList& globalTypeConformances
+)
+    : name(name), passDefine(passDefine)
 {
-    // renderData holds the requested resources
-    // auto& pTexture = renderData.getTexture("src");
-    auto& dict = renderData.getDictionary();
+    const uint32_t kRayTypeScatter = 0;
+    const uint32_t kMissScatter = 0;
 
-    if (mOptionsChanged)
-    {
-        auto flags = dict.getValue(kRenderPassRefreshFlags, RenderPassRefreshFlags::None);
-        dict[Falcor::kRenderPassRefreshFlags] = flags | Falcor::RenderPassRefreshFlags::RenderOptionsChanged;
-        mOptionsChanged = false;
-    }
-    // If we have no scene, just clear the outputs and return.
-    if (!mpScene)
-    {
-        for(auto it : kOutputChannels)
-        {
-            Texture* pDst = renderData.getTexture(it.name).get();
-            if (pDst)
-                pRenderContext->clearTexture(pDst);
-        }
+    ProgramDesc desc;
+    desc.addShaderModules(pScene->getShaderModules());
+    desc.addShaderLibrary(kShaderFile);
+    desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
+    desc.setMaxAttributeSize(pScene->getRaytracingMaxAttributeSize());
+    desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
+    if (!pScene->hasProceduralGeometry())
+        desc.setRtPipelineFlags(RtPipelineFlags::SkipProceduralPrimitives);
+
+    // Create ray tracing binding table.
+    pBindingTable = RtBindingTable::create(0, 1, pScene->getGeometryCount());
+
+    // Specify entry point for raygen shader.
+    // The raygen shader needs type conformances for *all* materials in the scene.
+    pBindingTable->setRayGen(desc.addRayGen("rayGen", globalTypeConformances));
+
+    pProgram = Program::create(pDevice, desc, defines);
+}
+void TestGauss::TracePass::prepareProgram(ref<Device> pDevice, const DefineList& defines)
+{
+    FALCOR_ASSERT(pProgram != nullptr && pBindingTable != nullptr);
+    pProgram->setDefines(defines);
+    if (!passDefine.empty())
+        pProgram->addDefine(passDefine);
+    pVars = RtProgramVars::create(pDevice, pProgram, pBindingTable);
+}
+void TestGauss::updatePrograms()
+{
+    FALCOR_ASSERT(mpScene);
+
+    if (mRecompile == false)
         return;
-    }
 
-    // Check for scene changes that require shader recompilation.
-    if (is_set(mpScene->getUpdates(), Scene::UpdateFlags::RecompileNeeded) ||
-        is_set(mpScene->getUpdates(), Scene::UpdateFlags::GeometryChanged))
+    auto defines = mStaticParams.getDefines(*this);
+    auto globalTypeConformances = mpScene->getTypeConformances();
+
+    // Create trace pass.
+    mpTracePass = std::make_unique<TracePass>(mpDevice, "tracePass", "", mpScene, defines, globalTypeConformances);
+    mpTracePass->prepareProgram(mpDevice, defines);
+
+    // Create compute passes.
+    ProgramDesc baseDesc;
+    baseDesc.addShaderModules(mpScene->getShaderModules());
+    baseDesc.addTypeConformances(globalTypeConformances);
+
+    // TODO: Create preprocessing compute passes for WAR.
+
+    mVarsChanged = true;
+    mRecompile = false;
+}
+
+void TestGauss::prepareResources(RenderContext* pRenderContext, const RenderData& renderData)
+{
+    // TODO: Prepare buffers for WAR.
+}
+
+void TestGauss::bindShaderData(const ShaderVar& var, const RenderData& renderData, bool useLightSampling) const
+{
+    var["params"].setBlob(mParams);
+
+    if (useLightSampling && mpEmissiveSampler)
     {
-        sceneChanged();
+        mpEmissiveSampler->bindShaderData(var["emissiveSampler"]);
     }
+}
 
-    // Request the light collection if emissive lights are enabled.
-    if (mpScene->getRenderSettings().useEmissiveLights)
+void TestGauss::prepareDiffPathTracer(const RenderData& renderData)
+{
+    if (!mpDiffPTBlock || mVarsChanged)
     {
-        mpScene->getLightCollection(pRenderContext);
+        auto pReflection = mpTracePass->pProgram->getReflector();
+        auto pBlockReflection = pReflection->getParameterBlock("gDiffPTData");
+        FALCOR_ASSERT(pBlockReflection);
+        mpDiffPTBlock = ParameterBlock::create(mpDevice, pBlockReflection);
+        FALCOR_ASSERT(mpDiffPTBlock);
+        mVarsChanged = true;
     }
 
-    // Configure depth-of-field.
-    const bool useDOF = mpScene->getCamera()->getApertureRadius() > 0.f;
-    if (useDOF && renderData[kInputViewDir] == nullptr)
-    {
-        logWarning("Depth-of-field requires the '{}' input. Expect incorrect shading.", kInputViewDir);
-    }
+    // Bind resources.
+    auto var = mpDiffPTBlock->getRootVar();
+    bindShaderData(var, renderData);
+}
 
+void TestGauss::tracePass(RenderContext* pRenderContext, const RenderData& renderData, TracePass& tracePass)
+{
+    FALCOR_PROFILE(pRenderContext, tracePass.name);
 
-    // Specialize program
-    // These defines should not modify the program vars. Do not trigger program vars re-creation.
-    mRT.pProgram->addDefine("MAX_BOUNCES", std::to_string(mMaxBounces));
-    mRT.pProgram->addDefine("COMPUTE_DIRECT", mComputeDirect ? "1" : "0");
-    mRT.pProgram->addDefine("USE_IMPORTANCE_SAMPLING", mUseImportanceSampling ? "1" : "0");
-    mRT.pProgram->addDefine("USE_ANALYTIC_LIGHTS", mpScene->useAnalyticLights() ? "1" : "0");
-    mRT.pProgram->addDefine("USE_EMISSIVE_LIGHTS", mpScene->useEmissiveLights() ? "1" : "0");
-    mRT.pProgram->addDefine("USE_ENV_LIGHT", mpScene->useEnvLight() ? "1" : "0");
-    mRT.pProgram->addDefine("USE_ENV_BACKGROUND", mpScene->useEnvBackground() ? "1" : "0");
+    FALCOR_ASSERT(tracePass.pProgram != nullptr && tracePass.pBindingTable != nullptr && tracePass.pVars != nullptr);
 
-    // For optional I/O resources, set 'is_valid_<name>' defines to inform the program of which ones it can access.
-    // TODO: This should be moved to a more general mechanism using Slang.
-    mRT.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
-    mRT.pProgram->addDefines(getValidResourceDefines(kOutputChannels, renderData));
+    // Bind global resources.
+    auto var = tracePass.pVars->getRootVar();
+    mpScene->setRaytracingShaderData(pRenderContext, var);
 
-    // Prepare program vars. This may trigger shader compilation.
-    // The program should have all necvessary defines set at this point.
-    // if (mRT.pVars == nullptr)
-    // {
-    //     prepareVars();
-    // }
-    prepareVars();
-    FALCOR_ASSERT(mRT.pVars);
-    // Set constants.
-    auto var = mRT.pVars->getRootVar();
-    var["CB"]["gFrameCount"] = mFrameCount;
-    var["CB"]["gPRNGDimension"] = dict.keyExists(kRenderPassPRNGDimension) ? dict[kRenderPassPRNGDimension] : 0u;
+    if (mVarsChanged)
+        mpSampleGenerator->bindShaderData(var);
+
+    mpPixelDebug->prepareProgram(tracePass.pProgram, var);
+
+    // Bind the differentiable path tracer data block;
+    var["gDiffPTData"] = mpDiffPTBlock;
+
+    var["gDiffDebug"].setBlob(mDiffDebugParams);
+    var["dLdI"] = mpdLdI;
+    if (mpSceneGradients)
+        mpSceneGradients->bindShaderData(var["gSceneGradients"]);
 
     // Bind I/O buffers. These needs to be done per-frame as the buffers may change anytime.
     auto bind = [&](const ChannelDesc& desc)
@@ -279,138 +346,265 @@ void TestGauss::execute(RenderContext* pRenderContext, const RenderData& renderD
             var[desc.texname] = renderData.getTexture(desc.name);
         }
     };
-
     for (auto channel : kInputChannels)
         bind(channel);
     for (auto channel : kOutputChannels)
         bind(channel);
 
-    const uint2 targetDim = renderData.getDefaultTextureDims();
-    FALCOR_ASSERT(targetDim.x > 0 && targetDim.y > 0);
-
-    mpScene->raytrace(pRenderContext, mRT.pProgram.get(), mRT.pVars, uint3(targetDim, 1));
-
-    mFrameCount++;
+    // Full screen dispatch.
+    mpScene->raytrace(pRenderContext, tracePass.pProgram.get(), tracePass.pVars, uint3(mParams.frameDim, 1));
 }
+
+void TestGauss::endFrame(RenderContext* pRenderContext, const RenderData& renderData)
+{
+    mpPixelDebug->endFrame(pRenderContext);
+
+    mVarsChanged = false;
+    mParams.frameCount++;
+}
+
+void TestGauss::execute(RenderContext* pRenderContext, const RenderData& renderData)
+{
+
+    if (!beginFrame(pRenderContext, renderData))
+        return;
+
+    // Update shader program specialization.
+    updatePrograms();
+
+    // Prepare resources.
+    prepareResources(pRenderContext, renderData);
+
+    // Prepare the differentiable path tracer parameter block.
+    // This should be called after all resources have been created.
+    prepareDiffPathTracer(renderData);
+
+    // Trace pass.
+    FALCOR_ASSERT(mpTracePass);
+    tracePass(pRenderContext, renderData, *mpTracePass);
+
+    endFrame(pRenderContext, renderData);
+}
+
+void TestGauss::resetLighting()
+{
+    // We only use a uniform emissive sampler for now.
+    mpEmissiveSampler = nullptr;
+    mRecompile = true;
+}
+
 
 void TestGauss::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
 {
-    // Set new scene.
     mpScene = pScene;
+    mParams.frameCount = 0;
+    mParams.frameDim = {};
 
-    // Clear data for previous scene.
-    // After changing scene, the ray tracing program needs to be recreated.
-    mRT.pProgram = nullptr;
-    mRT.pBindingTable = nullptr;
-    mRT.pVars = nullptr;
-    mFrameCount = 0;
+    // Need to recreate the trace passes because the shader binding table changes.
+    mpTracePass = nullptr;
+
+    resetLighting();
 
     if (mpScene)
     {
-        sceneChanged();
+        // if (pScene->hasGeometryType(Scene::GeometryType::Custom))
+        // {
+        //     logError("WARDiffPathTracer: This render pass does not support custom primitives.");
+        // }
+
+        // sceneChanged(pRenderContext);
+
+        mRecompile = true;
     }
 }
 
-void TestGauss::sceneChanged()
+
+bool TestGauss::prepareLighting(RenderContext* pRenderContext)
+{
+    bool lightingChanged = false;
+
+    if (is_set(mpScene->getUpdates(), Scene::UpdateFlags::RenderSettingsChanged))
+    {
+        lightingChanged = true;
+        mRecompile = true;
+    }
+
+    if (mpScene->useEnvLight())
+    {
+        logError("WARDiffPathTracer: This render pass does not support environment lights.");
+    }
+
+    // Request the light collection if emissive lights are enabled.
+    if (mpScene->getRenderSettings().useEmissiveLights)
+    {
+        mpScene->getLightCollection(pRenderContext);
+    }
+
+    if (mpScene->useEmissiveLights())
+    {
+        if (!mpEmissiveSampler)
+        {
+            const auto& pLights = mpScene->getLightCollection(pRenderContext);
+            FALCOR_ASSERT(pLights && pLights->getActiveLightCount(pRenderContext) > 0);
+            FALCOR_ASSERT(!mpEmissiveSampler);
+
+            // We only use a uniform emissive sampler for now.
+            // LightBVH seems buggy with the Cornell box bunny example.
+            mpEmissiveSampler = std::make_unique<EmissiveUniformSampler>(pRenderContext, mpScene);
+
+            lightingChanged = true;
+            mRecompile = true;
+        }
+    }
+    else
+    {
+        if (mpEmissiveSampler)
+        {
+            // We only use a uniform emissive sampler for now.
+            mpEmissiveSampler = nullptr;
+            lightingChanged = true;
+            mRecompile = true;
+        }
+    }
+
+    if (mpEmissiveSampler)
+    {
+        lightingChanged |= mpEmissiveSampler->update(pRenderContext);
+        auto defines = mpEmissiveSampler->getDefines();
+        if (mpTracePass && mpTracePass->pProgram->addDefines(defines))
+            mRecompile = true;
+    }
+
+
+
+    return lightingChanged;
+}
+
+void TestGauss::prepareMaterials(RenderContext* pRenderContext)
+{
+    // This functions checks for material changes and performs any necessary update.
+    // For now all we need to do is to trigger a recompile so that the right defines get set.
+    // In the future, we might want to do additional material-specific setup here.
+
+    if (is_set(mpScene->getUpdates(), Scene::UpdateFlags::RecompileNeeded))
+    {
+        mRecompile = true;
+    }
+}
+
+void TestGauss::setFrameDim(const uint2 frameDim)
+{
+    auto prevFrameDim = mParams.frameDim;
+    mParams.frameDim = frameDim;
+
+    if (any(mParams.frameDim != prevFrameDim))
+    {
+        mVarsChanged = true;
+    }
+}
+
+bool TestGauss::beginFrame(RenderContext* pRenderContext, const RenderData& renderData)
+{
+    // Reset output textures.
+    bool dontClearOutputs = mStaticParams.diffMode == DiffMode::BackwardDiff && mParams.runBackward == 1;
+    if (!dontClearOutputs)
+    {
+        for (const auto& channel : kOutputChannels)
+        {
+            auto pTexture = renderData.getTexture(channel.name);
+            pRenderContext->clearUAV(pTexture->getUAV().get(), float4(0.f));
+        }
+    }
+
+    const auto& pOutputColor = renderData.getTexture("color");
+    FALCOR_ASSERT(pOutputColor);
+
+    // Set output frame dimension.
+    setFrameDim(uint2(pOutputColor->getWidth(), pOutputColor->getHeight()));
+
+    // Validate all I/O sizes match the expected size.
+    // If not, we'll disable the path tracer to give the user a chance to fix the configuration before re-enabling it.
+    bool resolutionMismatch = false;
+    auto validateChannels = [&](const auto& channels)
+    {
+        for (const auto& channel : channels)
+        {
+            auto pTexture = renderData.getTexture(channel.name);
+            if (pTexture && (pTexture->getWidth() != mParams.frameDim.x || pTexture->getHeight() != mParams.frameDim.y))
+                resolutionMismatch = true;
+        }
+    };
+    validateChannels(kInputChannels);
+    validateChannels(kOutputChannels);
+
+    if (mEnabled && resolutionMismatch)
+    {
+        logError("WARDiffPathTracer I/O sizes don't match. The pass will be disabled.");
+        mEnabled = false;
+    }
+
+    if (mpScene == nullptr || !mEnabled)
+    {
+        // Set refresh flag if changes that affect the output have occured.
+        // This is needed to ensure other passes get notified when the path tracer is enabled/disabled.
+        if (mOptionsChanged)
+        {
+            auto& dict = renderData.getDictionary();
+            auto flags = dict.getValue(kRenderPassRefreshFlags, Falcor::RenderPassRefreshFlags::None);
+            if (mOptionsChanged)
+                flags |= Falcor::RenderPassRefreshFlags::RenderOptionsChanged;
+            dict[Falcor::kRenderPassRefreshFlags] = flags;
+        }
+
+        return false;
+    }
+
+    // Update materials.
+    prepareMaterials(pRenderContext);
+
+    // Update the emissive sampler to the current frame.
+    bool lightingChanged = prepareLighting(pRenderContext);
+
+    // Update refresh flag if changes that affect the output have occured.
+    auto& dict = renderData.getDictionary();
+    if (mOptionsChanged || lightingChanged)
+    {
+        auto flags = dict.getValue(kRenderPassRefreshFlags, Falcor::RenderPassRefreshFlags::None);
+        if (mOptionsChanged)
+            flags |= Falcor::RenderPassRefreshFlags::RenderOptionsChanged;
+        if (lightingChanged)
+            flags |= Falcor::RenderPassRefreshFlags::LightingChanged;
+        dict[Falcor::kRenderPassRefreshFlags] = flags;
+        mOptionsChanged = false;
+    }
+
+    mpPixelDebug->beginFrame(pRenderContext, mParams.frameDim);
+
+    // Update the random seed.
+    mParams.seed = mParams.useFixedSeed ? mParams.fixedSeed : mParams.frameCount;
+    return true;
+}
+
+void TestGauss::sceneChanged(RenderContext* pRenderContext)
 {
     FALCOR_ASSERT(mpScene);
-    const uint32_t geometryCount = mpScene->getGeometryCount();
-
-    //
-    // Example creating a ray tracing program using the new interfaces.
-    //
-
-    ProgramDesc desc;
-    desc.addShaderModules(mpScene->getShaderModules());
-    desc.addShaderLibrary(kShaderFilename);
-    desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
-    desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
-    desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
-    // desc.setMaxAttributeSize(kMaxAttributeSizeBytes);
-
-    mRT.pBindingTable = RtBindingTable::create(2, 2, geometryCount);
-    auto& sbt = mRT.pBindingTable;
-
-    sbt->setRayGen(desc.addRayGen("rayGen"));
-    sbt->setMiss(0, desc.addMiss("scatterMiss"));
-    sbt->setMiss(1, desc.addMiss("shadowMiss"));
-
-    if (mpScene->hasGeometryType(Scene::GeometryType::TriangleMesh))
-    {
-        sbt->setHitGroup(
-            0,
-            mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh),
-            desc.addHitGroup("scatterTriangleMeshClosestHit", "scatterTriangleMeshAnyHit")
-        );
-        sbt->setHitGroup(
-            1, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup("", "shadowTriangleMeshAnyHit")
-        );
-    }
-
-    if (mpScene->hasGeometryType(Scene::GeometryType::DisplacedTriangleMesh))
-    {
-        sbt->setHitGroup(
-            0,
-            mpScene->getGeometryIDs(Scene::GeometryType::DisplacedTriangleMesh),
-            desc.addHitGroup("scatterDisplacedTriangleMeshClosestHit", "", "displacedTriangleMeshIntersection")
-        );
-        sbt->setHitGroup(
-            1,
-            mpScene->getGeometryIDs(Scene::GeometryType::DisplacedTriangleMesh),
-            desc.addHitGroup("", "", "displacedTriangleMeshIntersection")
-        );
-    }
-
-    if (mpScene->hasGeometryType(Scene::GeometryType::Curve))
-    {
-        sbt->setHitGroup(
-            0, mpScene->getGeometryIDs(Scene::GeometryType::Curve), desc.addHitGroup("scatterCurveClosestHit", "", "curveIntersection")
-        );
-        sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::Curve), desc.addHitGroup("", "", "curveIntersection"));
-    }
-
-    if (mpScene->hasGeometryType(Scene::GeometryType::SDFGrid))
-    {
-        sbt->setHitGroup(
-            0,
-            mpScene->getGeometryIDs(Scene::GeometryType::SDFGrid),
-            desc.addHitGroup("scatterSdfGridClosestHit", "", "sdfGridIntersection")
-        );
-        sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::SDFGrid), desc.addHitGroup("", "", "sdfGridIntersection"));
-    }
-
-    if (mpScene->hasGeometryType(Scene::GeometryType::Custom))
-    {
-        sbt->setHitGroup(
-            0,
-            mpScene->getGeometryIDs(Scene::GeometryType::Custom),
-            desc.addHitGroup("closestHitSphereAttrib", "anyHitSphereAttrib", "intersectSphere")
-        );
-    }
-
-    DefineList defines = mpScene->getSceneDefines();
-    // defines.add("MODE", std::to_string(mMode));
-
-    // Create program
-    mRT.pProgram = Program::create(mpDevice, desc, defines);
-    // prepareVars();
-
+    prepareMaterials(pRenderContext);
 }
 
 
-void TestGauss::prepareVars()
-{
-    FALCOR_ASSERT(mpScene);
-    FALCOR_ASSERT(mRT.pProgram);
+// void TestGauss::prepareVars()
+// {
+//     FALCOR_ASSERT(mpScene);
+//     FALCOR_ASSERT(mRT.pProgram);
 
-    mRT.pProgram->addDefines(mpSampleGenerator->getDefines());
-    mRT.pProgram->setTypeConformances(mpScene->getTypeConformances());
+//     mRT.pProgram->addDefines(mpSampleGenerator->getDefines());
+//     mRT.pProgram->setTypeConformances(mpScene->getTypeConformances());
 
-    mRT.pVars = RtProgramVars::create(mpDevice, mRT.pProgram, mRT.pBindingTable);
+//     mRT.pVars = RtProgramVars::create(mpDevice, mRT.pProgram, mRT.pBindingTable);
 
-    auto var = mRT.pVars->getRootVar();
-    mpSampleGenerator->bindShaderData(var);
-}
+//     auto var = mRT.pVars->getRootVar();
+//     mpSampleGenerator->bindShaderData(var);
+// }
 void TestGauss::renderUI(Gui::Widgets& widget)
 {
     if (!mpScene)
@@ -438,27 +632,97 @@ void TestGauss::renderUI(Gui::Widgets& widget)
         addRandomGauss();
     }
 
-    // if (primCount > 0)
-    // {
-    //     if (widget.button("Remove", true))
-    //     {
-    //         removeCustomPrimitive(mSelectedIdx);
-    //     }
+    bool dirty = false;
 
-    //     if (widget.button("Random move"))
-    //     {
-    //         moveCustomPrimitive();
-    //     }
+    // Rendering options.
+    dirty |= renderRenderingUI(widget);
 
-    //     bool modified = false;
-    //     modified |= widget.var("Min", mSelectedAABB.minPoint);
-    //     modified |= widget.var("Max", mSelectedAABB.maxPoint);
-    //     if (widget.button("Update"))
-    //     {
-    //         mpScene->updateCustomPrimitive(mSelectedIdx, mSelectedAABB);
-    //     }
-    // }
+    // Debug options.
+    dirty |= renderDebugUI(widget);
 
+    // If rendering options that modify the output have changed, set flag to indicate that.
+    // In execute() we will pass the flag to other passes for reset of temporal data etc.
+    if (dirty)
+    {
+        mOptionsChanged = true;
+    }
+
+}
+
+bool TestGauss::renderRenderingUI(Gui::Widgets& widget)
+{
+    bool dirty = false;
+    bool runtimeDirty = false;
+
+    dirty |= widget.var("Samples/pixel", mStaticParams.samplesPerPixel, 1u, kMaxSamplesPerPixel);
+    widget.tooltip("Number of samples per pixel. One path is traced for each sample.");
+
+    dirty |= widget.var("Max bounces", mStaticParams.maxBounces, 0u, kBounceLimit);
+    widget.tooltip("Maximum number of surface bounces\n0 = direct only\n1 = one indirect bounce etc.");
+
+    // Differentiable rendering options.
+
+    dirty |= widget.dropdown("Diff mode", mStaticParams.diffMode);
+    widget.text("Diff variable name: " + mStaticParams.diffVarName);
+
+    dirty |= widget.checkbox("Antithetic sampling", mStaticParams.useAntitheticSampling);
+    widget.tooltip(
+        "Use antithetic sampling.\n"
+        "When enabled, two correlated paths are traced per pixel, one with the original sample and one with the negated sample.\n"
+        "This can be used to reduce variance in gradient estimation."
+    );
+
+    // Sampling options.
+
+    if (widget.dropdown("Sample generator", SampleGenerator::getGuiDropdownList(), mStaticParams.sampleGenerator))
+    {
+        mpSampleGenerator = SampleGenerator::create(mpDevice, mStaticParams.sampleGenerator);
+        dirty = true;
+    }
+
+    dirty |= widget.checkbox("BSDF importance sampling", mStaticParams.useBSDFSampling);
+    widget.tooltip(
+        "BSDF importance sampling should normally be enabled.\n\n"
+        "If disabled, cosine-weighted hemisphere sampling is used for debugging purposes"
+    );
+
+    dirty |= widget.checkbox("Next-event estimation (NEE)", mStaticParams.useNEE);
+    widget.tooltip("Use next-event estimation.\nThis option enables direct illumination sampling at each path vertex.");
+
+    if (mStaticParams.useNEE)
+    {
+        dirty |= widget.checkbox("Multiple importance sampling (MIS)", mStaticParams.useMIS);
+        widget.tooltip(
+            "When enabled, BSDF sampling is combined with light sampling for the environment map and emissive lights.\n"
+            "Note that MIS has currently no effect on analytic lights."
+        );
+    }
+
+    if (dirty)
+        mRecompile = true;
+    return dirty || runtimeDirty;
+}
+
+bool TestGauss::renderDebugUI(Gui::Widgets& widget)
+{
+    bool dirty = false;
+
+    if (auto group = widget.group("Debugging"))
+    {
+        dirty |= group.checkbox("Use fixed seed", mParams.useFixedSeed);
+        group.tooltip(
+            "Forces a fixed random seed for each frame.\n\n"
+            "This should produce exactly the same image each frame, which can be useful for debugging."
+        );
+        if (mParams.useFixedSeed)
+        {
+            dirty |= group.var("Seed", mParams.fixedSeed);
+        }
+
+        mpPixelDebug->renderUI(group);
+    }
+
+    return dirty;
 }
 
 DefineList TestGauss::StaticParams::getDefines(const TestGauss& owner) const
@@ -520,7 +784,14 @@ void TestGauss::addRandomGauss()
     float r = 0.5f * u(rng) + 0.5f;
     mpScene->addCustomPrimitiveWithMaterial(mUserID++, AABB(c - r, c + r), pRandomGaussMat);
     mpScene->getMaterialSystem().update(true);
-    sceneChanged();
+    // sceneChanged();
 
 }
 
+void TestGauss::setDiffDebugParams(DiffVariableType varType, uint2 id, uint32_t offset, float4 grad)
+{
+    mDiffDebugParams.varType = varType;
+    mDiffDebugParams.id = id;
+    mDiffDebugParams.offset = offset;
+    mDiffDebugParams.grad = grad;
+}

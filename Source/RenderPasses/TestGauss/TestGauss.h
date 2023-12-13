@@ -62,13 +62,55 @@ public:
 
     static void registerScriptBindings(pybind11::module& m);
 
+    // Python bindings
+    const ref<SceneGradients>& getSceneGradients() const { return mpSceneGradients; }
+    void setSceneGradients(const ref<SceneGradients>& sg) { mpSceneGradients = sg; }
+    uint32_t getRunBackward() const { return mParams.runBackward; }
+    void setRunBackward(uint32_t value) { mParams.runBackward = value; }
+    const ref<Buffer>& getdLdI() const { return mpdLdI; }
+    void setdLdI(const ref<Buffer>& buf) { mpdLdI = buf; }
+
+    void setDiffDebugParams(DiffVariableType varType, uint2 id, uint32_t offset, float4 grad);
+
 private:
+
+    struct TracePass
+    {
+        std::string name;
+        std::string passDefine;
+        ref<Program> pProgram;
+        ref<RtBindingTable> pBindingTable;
+        ref<RtProgramVars> pVars;
+
+        TracePass(
+            ref<Device> pDevice,
+            const std::string& name,
+            const std::string& passDefine,
+            const ref<Scene>& pScene,
+            const DefineList& defines,
+            const TypeConformanceList& globalTypeConformances
+        );
+        void prepareProgram(ref<Device> pDevice, const DefineList& defines);
+    };
     void parseProperties(const Properties& props);
+    void setFrameDim(const uint2 frameDim);
+    void updatePrograms();
+    void resetLighting();
+    void prepareResources(RenderContext* pRenderContext, const RenderData& renderData);
+    void bindShaderData(const ShaderVar& var, const RenderData& renderData, bool useLightSampling = true) const;
+    void prepareDiffPathTracer(const RenderData& renderData);
+    void tracePass(RenderContext* pRenderContext, const RenderData& renderData, TracePass& tracePass);
+    bool renderRenderingUI(Gui::Widgets& widget);
+    bool renderDebugUI(Gui::Widgets& widget);
     void prepareVars();
 
-    void sceneChanged();
+    void sceneChanged(RenderContext* pRenderContext);
     void addRandomGauss();
 
+    bool prepareLighting(RenderContext* pRenderContext);
+    void prepareMaterials(RenderContext* pRenderContext);
+    bool beginFrame(RenderContext* pRenderContext, const RenderData& renderData);
+    void endFrame(RenderContext* pRenderContext, const RenderData& renderData);
 
     /**
      * Static configuration. Changing any of these options require shader recompilation.
@@ -140,6 +182,8 @@ private:
     uint32_t mPrevSelectedIdx = -1;
     AABB mSelectedAABB;
 
+    /// Switch to enable/disable the path tracer. When disabled the pass outputs are cleared.
+    bool mEnabled = true;
     /// Gauss count.
     uint32_t mUserID = 1;
 
@@ -152,18 +196,28 @@ private:
     /// Use importance sampling for materials.
     bool mUseImportanceSampling = true;
 
+
+    // Configuration
+
+    /// Runtime path tracer parameters.
+    GaussDiffPathTracerParams mParams;
+    /// Static parameters. These are set as compile-time constants in the shaders.
+    StaticParams mStaticParams;
+    /// Differentiable rendering debug parameters.
+    DiffDebugParams mDiffDebugParams;
     // Runtime data
 
     /// Frame count since scene was loaded.
     uint mFrameCount = 0;
+
+    /// Set to true when program specialization has changed.
+    bool mRecompile = false;
+    /// This is set to true whenever the program vars have changed and resources need to be rebound.
+    bool mVarsChanged = true;
+    /// True if the config has changed since last frame.
     bool mOptionsChanged = false;
 
     // Ray tracing program
-    struct TracePass
-    {
-        ref<Program> pProgram;
-        ref<RtBindingTable> pBindingTable;
-        ref<RtProgramVars> pVars;
-    } mRT;
+    std::unique_ptr<TracePass> mpTracePass;
 
 };
