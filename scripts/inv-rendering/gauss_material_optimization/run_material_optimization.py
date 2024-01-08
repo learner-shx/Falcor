@@ -43,6 +43,9 @@ def main(args):
         },
         falcor.MaterialType.Gauss: {
             "base_color": 1e-2,
+            # "cov_diag": 1e-2,
+            # "cov_off_diag": 1e-2,
+            # "alpha":1e-2,
         },
     }
 

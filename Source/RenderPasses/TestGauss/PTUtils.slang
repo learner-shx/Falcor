@@ -130,8 +130,7 @@ float3 evalDirectAnalytic( SceneQueryAD sceneQuery, const ShadingData sd, const 
         if (valid && dot(ls.dir, getFlippedShadingNormal(sd)) > kMinCosTheta)
         {
             // Test visibility by tracing a shadow ray.
-            Ray shadowRay = Ray(ls.posW, ls.dir, 0.f, ls.distance);;
-            bool visible = sceneQuery.traceVisibilityRay(shadowRay);
+            // Ray shadowRay = Ray(ls.posW, ls.dir, 0.f, ls.distance);;
 
             contribution += mi.evalAD(diffData, sd, ls.dir, sg) * ls.Li * invPdf;
         }
@@ -383,7 +382,6 @@ void handleHit(
     print<uint>("CustomPrimitiveCount", gScene.customPrimitiveInstanceCount);
     print<uint>("CustomPrimitiveOffset", gScene.customPrimitiveInstanceOffset);
 
-    print<uint>("gDiffDebug.id.x", gDiffDebug.id.x);
     GeometryInstanceID testID;
     uint testPId;
 
@@ -391,24 +389,21 @@ void handleHit(
     {
         // CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(isect.instanceID);
         // float alpha;
-        // uint offset = 0;
-        // diffData.read(alpha, offset);
+        float3 baseColor;
+        uint offset = 0;
+        diffData.read(baseColor, offset);
         // float epower = exp(-10 * gaussHit.barycentrics.x);
         // alpha *= epower;
         // pathData.radiance += mi.evalAD(diffData, sd, float3(0.0), sg) * pathData.thp * epower;
         // pathData.thp *= (1 - alpha);
 
         CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(isect.instanceID);
-        float alpha;
-        float3 baseColor;
-        uint offset = 0;
         // diffData.read(alpha, offset);
-        diffData.read(baseColor, offset);
         // float epower = exp(-10 * gaussHit.barycentrics.x);
         // alpha *= epower;
-        pathData.radiance += mi.evalAD(diffData, sd, float3(0.0), sg);
+        // pathData.radiance += mi.evalAD(diffData, sd, float3(0.0), sg);
 
-        // pathData.radiance += float3(0.1f) * baseColor;
+        pathData.radiance += float3(0.1f) * baseColor;
         // pathData.thp *= (1 - alpha);
     }
     else
@@ -416,7 +411,7 @@ void handleHit(
         // pathData.radiance += evalDirectAnalytic(sceneQuery, sd, mi, diffData, ray.origin, sg);
     }
 
-    // float3 hitPos = isect.posW;
+    float3 hitPos = isect.posW;
 
     // ray.origin = computeRayOrigin(hitPos, ray.direction);
     // ray.direction = ray.direction;
@@ -425,19 +420,19 @@ void handleHit(
     // pathData.radiance += gScene.customPrimitiveInstanceOffset / 10.0;
     // pathData.radiance += float3(0.0f, 1.0f, 0.0f);;
 
-    // if (gScene.getGeometryInstanceType(isect.instanceID) == GeometryType::Custom)
-    // {
-    //     ray.origin = computeRayOrigin(hitPos, ray.direction);
-    // }
+    if (gScene.getGeometryInstanceType(isect.instanceID) == GeometryType::Custom)
+    {
+        ray.origin = computeRayOrigin(hitPos, ray.direction);
+    }
 
-    // else
-    // {
-    //     if (!generateScatterRay(sceneQuery, sd, mi, diffData, isect, ray, pathData, sg))
-    //     {
-    //         pathData.terminated = true;
-    //         return;
-    //     }
-    // }
+    else
+    {
+        if (!generateScatterRay(sceneQuery, sd, mi, diffData, isect, ray, pathData, sg))
+        {
+            pathData.terminated = true;
+            return;
+        }
+    }
 
     // print<float4>("ray.direction", float4(ray.direction, 1.0f));
     print<float>("pathData.thp.x", pathData.thp.x);
