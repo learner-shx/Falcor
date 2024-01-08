@@ -50,4 +50,5 @@ try: m.addGraph(TestGauss)
 except NameError: None
 
 flags = SceneBuilderFlags.DontMergeMaterials | SceneBuilderFlags.RTDontMergeDynamic | SceneBuilderFlags.DontOptimizeMaterials
-m.loadScene("test_scenes/testCustom.pyscene", buildFlags=flags)
+# m.loadScene("test_scenes/testCustom.pyscene", buildFlags=flags)
+m.loadScene("inv_rendering_scenes/testCustom_ref.pyscene", buildFlags=flags)

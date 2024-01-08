@@ -37,6 +37,7 @@ import Scene.Intersection;
 import Scene.SDFs.SDFGridHitData;
 __exported import Scene.Shading;
 __exported import Scene.SceneRayQueryInterface;
+import Utils.Debug.PixelDebug;
 
 /** Return the geometry type for a committed hit.
 */
@@ -90,8 +91,8 @@ bool traceSceneRayImpl<let Flags : int>(const bool useAlphaTest, inout RayQuery<
     DisplacedTriangleMeshIntersector::Attribs displacedTriangleMeshCommittedAttribs;
     SDFGridHitData sdfGridCommittedHitData;
     GaussIntersector::Attribs gaussCommittedAttribs;
-
-    while (rayQuery.Proceed())
+    bool done = false;
+    while (rayQuery.Proceed() && !done)
     {
 #if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_TRIANGLE_MESH)
         if (useAlphaTest && rayQuery.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
@@ -150,6 +151,7 @@ bool traceSceneRayImpl<let Flags : int>(const bool useAlphaTest, inout RayQuery<
                     {
                         rayQuery.CommitProceduralPrimitiveHit(t);
                         gaussCommittedAttribs = attribs;
+                        done = true;
                     }
                 }
                 break;
@@ -221,12 +223,12 @@ bool traceSceneRayImpl<let Flags : int>(const bool useAlphaTest, inout RayQuery<
 #if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
         case GeometryType::Custom:
             {
+
                 GaussHit gaussHit;
                 gaussHit.instanceID = instanceID;
                 gaussHit.primitiveIndex = primitiveIndex;
                 gaussHit.barycentrics = gaussCommittedAttribs.barycentrics;
                 hit = HitInfo(gaussHit);
-                
                 hitT = rayQuery.CommittedRayT();
                 return true;
             }
@@ -335,7 +337,7 @@ bool traceSceneVisibilityRayImpl<let Flags : int>(const bool useAlphaTest, inout
                     float t;
                     if (GaussIntersector::intersect(raySegment, instanceID, primitiveIndex, attribs, t))
                     {
-                        rayQuery.CommitProceduralPrimitiveHit(t);
+                        // rayQuery.CommitProceduralPrimitiveHit(t);
                     }
                 }
                 break;

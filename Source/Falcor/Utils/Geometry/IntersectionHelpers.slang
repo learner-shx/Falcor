@@ -340,7 +340,7 @@ bool intersectGauss(float3 origin, float3 dir, float3 mu, float3x3 cov, out floa
 
     d = mdistance;
 
-    if (mdistance < 0.2f)
+    if (mdistance < 0.225f && t > HLF_MIN)
     {
         return true;
     }

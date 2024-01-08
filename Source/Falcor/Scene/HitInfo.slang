@@ -30,7 +30,7 @@ import Utils.Math.FormatConversion;
 __exported import Scene.HitInfoType;
 __exported import Scene.SceneTypes;
 __exported import Scene.SDFs.SDFGridHitData;
-
+import Utils.Debug.PixelDebug;
 /** Ray hit information.
 
     'HitInfo' is a polymorphic container for storing ray hit information.
@@ -200,9 +200,12 @@ struct GaussHit : GeometryHit
     __init(const PackedHitInfo packed)
     {
 #if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
+
         HitInfo::unpackHeader(packed, instanceID, primitiveIndex);
-        // barycentrics.x = asfloat(packed[2]);
-        // barycentrics.y = asfloat(packed[3]);
+        // instanceID = GeometryInstanceID(packed[0], 0);
+        // primitiveIndex = packed[1];
+        barycentrics.x = asfloat(packed[2]);
+        barycentrics.y = asfloat(packed[3]);
 #else
         this = {};
 #endif
@@ -211,11 +214,13 @@ struct GaussHit : GeometryHit
     PackedHitInfo pack()
     {
         PackedHitInfo packed = {};
-// #if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
+#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CUSTOM)
         HitInfo::packHeader(packed, HitType::Gauss, instanceID, primitiveIndex);
-        // packed[2] = asuint(barycentrics.x);
-        // packed[3] = asuint(barycentrics.y);
-// #endif
+        // packed[0] = instanceID.index;
+        // packed[1] = primitiveIndex;
+        packed[2] = asuint(barycentrics.x);
+        packed[3] = asuint(barycentrics.y);
+#endif
         return packed;
     }
 };
@@ -506,11 +511,6 @@ struct HitInfo
 
     static void packHeader(inout PackedHitInfo packed, const HitType type, const GeometryInstanceID instanceID, const uint primitiveIndex)
     {
-        if (type == HitType::Gauss)
-        {
-            packed[0] = 0;
-        }
-
 
         if (kHeaderBits <= 32)
         {
@@ -527,14 +527,18 @@ struct HitInfo
 
     static void unpackHeader(const PackedHitInfo packed, out GeometryInstanceID instanceID, out uint primitiveIndex)
     {
+
+        uint type = 7;
+        uint tmp = (9 << kInstanceIDOffset);
+        uint InstanceIDBits = kTypeOffset - kInstanceIDOffset;
         if (kHeaderBits <= 32)
         {
-            instanceID.index = { (packed[0] >> kInstanceIDOffset) & ((1 << kInstanceIDBits) - 1) };
+            instanceID.index = { (packed[0] >> kInstanceIDOffset) & ((1 << InstanceIDBits) - 1) };
             primitiveIndex = packed[0] & ((1 << kPrimitiveIndexBits) - 1);
         }
         else
         {
-            instanceID.index = { packed[0] & ((1 << kInstanceIDBits) - 1) };
+            instanceID.index = { packed[0] & ((1 << InstanceIDBits) - 1) };
             primitiveIndex = packed[1];
         }
     }

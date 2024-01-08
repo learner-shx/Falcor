@@ -30,6 +30,9 @@ import DiffRendering.DiffDebug;
 import Scene.Material.MaterialParamLayout;
 import Utils.Math.HashUtils;
 
+import Utils.Debug.PixelDebug;
+import Utils.Debug.PixelDebugTypes;
+
 // Avoid compilation warnings if not running in a differentiable mode.
 #ifndef DIFF_MODE
 #define DIFF_MODE 0
@@ -79,6 +82,8 @@ struct GradientIOWrapper
     [TreatAsDifferentiable]
     __generic<let N : int> DifferentialPair<vector<float, N>> __fwd_d_getFloats(DifferentialPair<vector<float, N>> dpVal, uint offset)
     {
+
+        print<uint>("baseOffset: ", baseOffset);
         vector<float, N> d;
         [ForceUnroll]
         for (int i = 0; i < N; i++)

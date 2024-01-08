@@ -458,6 +458,7 @@ target_sources(Falcor PRIVATE
     Scene/Material/GaussMaterial.cpp
     Scene/Material/GaussMaterial.h
     Scene/Material/GaussMaterialData.slang
+    Scene/Material/GaussMaterialParamLayout.slang
 
     Scene/Material/PBRT/PBRTCoatedConductorMaterial.cpp
     Scene/Material/PBRT/PBRTCoatedConductorMaterial.h

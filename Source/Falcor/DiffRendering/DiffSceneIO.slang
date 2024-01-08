@@ -34,6 +34,7 @@ import Scene.SceneTypes;
 __exported import DiffRendering.SceneGradientInfo;
 import DiffRendering.DiffDebug;
 
+
 RWTexture2D<float4> gOutputDColor;
 
 // Avoid compilation warnings if not running in a differentiable mode.

@@ -27,7 +27,7 @@
  **************************************************************************/
 __exported import Rendering.Materials.IMaterial;
 __exported import Rendering.Materials.GaussMaterialInstance;
-import Scene.Material.StandardMaterialParamLayout;
+import Scene.Material.GaussMaterialParamLayout;
 import Scene.Material.GaussMaterialData;
 import Scene.Material.ShadingUtils;
 
@@ -49,6 +49,7 @@ struct GaussMaterial : MaterialBase, IMaterial
         {
             adjustShadingNormal(sd, sf);
         }
+
 
         // // Evaluate the albedo for the current incident (view) direction.
         // float3 albedo = {};
@@ -72,7 +73,19 @@ struct GaussMaterial : MaterialBase, IMaterial
     [Differentiable]
     GaussMaterialInstance setupDiffMaterialInstance(out DiffMaterialData diffData, const MaterialSystem ms, const ShadingData sd, const ITextureSampler lod, const uint hints)
     {
+        SamplerState s = ms.getTextureSampler(header.getDefaultTextureSamplerID());
         ShadingFrame sf = sd.frame;
+        uint hashIndex = hashFunction(sd.threadID, gSceneGradients.getHashSize(GradientType::Material));
+        GradientIOWrapper gradIO = GradientIOWrapper(GradientType::Material, sd.materialGradOffset, hashIndex);
+
+        float3 baseColor = gradIO.getFloat(data.baseColor, GaussMaterialParamLayout.baseColor);
+
+        float3 covDiag = gradIO.getFloat(data.covDiag, GaussMaterialParamLayout.covDiag);
+
+        float3 covOffDiag = gradIO.getFloat(data.covOffDiag, GaussMaterialParamLayout.covOffDiag);
+
+        float alpha = gradIO.getFloat(data.alpha, GaussMaterialParamLayout.alpha);
+
         flipShadingNormal(sd, sf);
         if (isAdjustShadingNormalEnabled(hints))
         {
@@ -80,10 +93,10 @@ struct GaussMaterial : MaterialBase, IMaterial
         }
 
         uint offset = 0;
-        diffData.write(data.alpha, offset); // offset 0
-        diffData.write(data.baseColor, offset); // offset 1 2 3
-        diffData.write(data.covDiag, offset); // offset 4 5 6
-        diffData.write(data.covOffDiag, offset); // offset 7 8 9
+        diffData.write(baseColor, offset); // offset 0 1 2
+        diffData.write(covDiag, offset); // offset 3 4 5
+        diffData.write(covOffDiag, offset); // offset 6 7 8
+        diffData.write(alpha, offset);      // offset 9
 
         return GaussMaterialInstance(sf);
     }

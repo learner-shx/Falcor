@@ -42,6 +42,9 @@
 #include <filesystem>
 #include <cmath>
 #include <execution>
+#include <random>
+
+#include "Scene/Material/GaussMaterial.h"
 
 namespace Falcor
 {
@@ -801,6 +804,37 @@ namespace Falcor
 
         mSceneData.customPrimitiveDesc.push_back(desc);
         mSceneData.customPrimitiveAABBs.push_back(aabb);
+    }
+
+    void SceneBuilder::addRandomCustomPrimitiveWithMaterial(uint32_t userID)
+    {
+        // Currently each custom primitive has exactly one AABB. This may change in the future.
+        FALCOR_ASSERT(mSceneData.customPrimitiveDesc.size() == mSceneData.customPrimitiveAABBs.size());
+        if (mSceneData.customPrimitiveAABBs.size() > std::numeric_limits<uint32_t>::max())
+        {
+            FALCOR_THROW("Custom primitive count exceeds the maximum");
+        }
+        std::random_device rd;
+        std::mt19937 rng(rd());
+        std::uniform_real_distribution<float> u(0.f, 1.f);
+        // uint32_t matCount = mpScene->getMaterialCount();
+        ref<GaussMaterial> pRandomGaussMat = GaussMaterial::create(mpDevice, "Gauss");
+        pRandomGaussMat.get()->setBaseColor(float3(u(rng), u(rng), u(rng)));
+        pRandomGaussMat.get()->setCovariance(float3(u(rng), u(rng), u(rng)), float3(u(rng) * M_2_PI, u(rng) * M_2_PI, u(rng) * M_2_PI));
+        pRandomGaussMat.get()->setAlpha(u(rng));
+
+        float3 c = {4.f * u(rng) - 2.f, u(rng), 4.f * u(rng) - 2.f};
+        c *= 10.0f;
+        float r = 0.5f * u(rng) + 0.5f;
+
+        CustomPrimitiveDesc desc = {};
+        desc.userID = userID;
+        desc.aabbOffset = (uint32_t)mSceneData.customPrimitiveAABBs.size();
+        desc.color = float3(0.5f, 0.2f, 0.1f);
+        desc.materialID = addMaterial(pRandomGaussMat).getSlang();
+
+        mSceneData.customPrimitiveDesc.push_back(desc);
+        mSceneData.customPrimitiveAABBs.push_back(AABB(c - r, c + r));
     }
 
     void SceneBuilder::addCustomPrimitive(uint32_t userID, const AABB& aabb)
@@ -3007,6 +3041,7 @@ namespace Falcor
         sceneBuilder.def("addCustomPrimitive", &SceneBuilder::addCustomPrimitive);
         sceneBuilder.def("addCustomPrimitiveWithMaterial", &SceneBuilder::addCustomPrimitiveWithMaterial);
 
+        sceneBuilder.def("addRandomCustomPrimitiveWithMaterial", &SceneBuilder::addRandomCustomPrimitiveWithMaterial);
         sceneBuilder.def("getSettings", static_cast<Settings&(SceneBuilder::*)()>(&SceneBuilder::getSettings), pybind11::return_value_policy::reference);
         sceneBuilder.def_property_readonly("assetResolver", &SceneBuilder::getAssetResolver, pybind11::return_value_policy::reference);
     }

@@ -29,6 +29,7 @@
 #include "Material/StandardMaterial.h"
 #include "Material/HairMaterial.h"
 #include "Material/ClothMaterial.h"
+#include "Material/GaussMaterial.h"
 #include "Material/MaterialTextureLoader.h"
 #include "Utils/Logger.h"
 
@@ -733,6 +734,9 @@ namespace Falcor
                 break;
             case MaterialType::Cloth:
                 pMaterial = ClothMaterial::create(pDevice, "");
+                break;
+            case MaterialType::Gauss:
+                pMaterial = GaussMaterial::create(pDevice, "");
                 break;
             default:
                 FALCOR_THROW("Unsupported material type");

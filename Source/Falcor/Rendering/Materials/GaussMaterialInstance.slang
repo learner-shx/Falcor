@@ -29,6 +29,8 @@
 
 __exported import Rendering.Materials.IMaterialInstance;
 import Rendering.Materials.BSDFs.DiffuseSpecularBRDF;
+__exported import DiffRendering.SceneGradients;
+__exported import DiffRendering.GradientIOWrapper;
 import Utils.Math.MathHelpers;
 import Scene.Scene;
 
@@ -71,13 +73,18 @@ struct GaussMaterialInstance : MaterialInstanceBase, IMaterialInstance
     float3 evalAD<S : ISampleGenerator>(const DiffMaterialData diffData, const ShadingData sd, const float3 wo, inout S sg)
     {
         float3 baseColor;
+        float3 covDiag;
+        float3 covOffDiag;
         float alpha;
         uint offset = 0;
-        diffData.read(alpha, offset);
         diffData.read(baseColor, offset);
+        diffData.read(covDiag, offset);
+        diffData.read(covOffDiag, offset);
+        diffData.read(alpha, offset);
 
-        baseColor = float3(diffData.data[1], diffData.data[2], diffData.data[3]);
-        return baseColor;
+
+        // baseColor = float3(diffData.data[1], diffData.data[2], diffData.data[3]);
+        return baseColor * alpha;
     }
 
 

@@ -61,6 +61,7 @@ struct IntersectionAD : IDifferentiable
     float3 posW;                   // World position of the hit point
     float hitT;                    // Distance from ray origin to hit point
 
+
     [Differentiable]
     [PreferRecompute]
     __init()
@@ -116,14 +117,48 @@ struct SceneQueryAD : IDifferentiable
         if (hitInfo.getType() == HitType::Gauss)
         {
             isect = computeGaussIntersectionAD(hitInfo, rayAD, mode);
-            // isect.triangleID = 0;
-            isect.hitT = hitT;
             return true;
         }
 
         // Convert a non-differentiable HitInfo to a differentiable IntersectionAD.
         // This method recomputes barycentrics and normals using differentiable functions.
         isect = computeIntersectionAD(hitInfo, rayAD, mode);
+
+        return true;
+    }
+
+    // Differentiable `traceRayInline` function.
+    [Differentiable]
+    [PreferRecompute]
+    bool traceRayInlineAD_test(const RayAD rayAD, out IntersectionAD isect, DiffIntersectionMode mode, out HitInfo hitInfo_test)
+    {
+        Ray ray = Ray(detach(rayAD.origin), detach(rayAD.direction), 0.f, FLT_MAX);
+
+        float hitT = 0.f;
+        SceneRayQuery<0> sceneRayQuery;
+
+        HitInfo hitInfo;
+        bool isHit = sceneRayQuery.traceRay(ray, hitInfo, hitT, RAY_FLAG_NONE, 0xff);
+        hitInfo_test = hitInfo;
+        if (!isHit)
+        {
+            isect = IntersectionAD();
+            return false;
+        }
+
+        // Convert a non-differentiable HitInfo to a differentiable IntersectionAD.
+        // This method recomputes gauss attributes using differentiable functions.
+        if (hitInfo.getType() == HitType::Gauss)
+        {
+            isect = computeGaussIntersectionAD_test(hitInfo, rayAD, mode, hitInfo_test);
+
+            return true;
+        }
+
+        // Convert a non-differentiable HitInfo to a differentiable IntersectionAD.
+        // This method recomputes barycentrics and normals using differentiable functions.
+        isect = computeIntersectionAD(hitInfo, rayAD, mode);
+
 
         return true;
     }
@@ -145,6 +180,48 @@ struct SceneQueryAD : IDifferentiable
 
         isect.triangleID = hit.primitiveIndex;
         isect.instanceID = hit.instanceID;
+        // isect.instanceID.index += gScene.customPrimitiveInstanceOffset;
+
+        if (mode == DiffIntersectionMode.AttachToRay)
+        {
+            float3 barycentrics;
+            float t = hit.barycentrics.y;
+            isect.posW = ray.origin + t * ray.direction;
+            isect.barycentrics = no_diff hit.getBarycentricWeights();
+            isect.hitT = t;
+        }
+        else if (mode == DiffIntersectionMode.AttachToGeometry)
+        {
+            // Attached to geometry
+
+            // Fix barycentrics.
+            isect.barycentrics = no_diff hit.getBarycentricWeights();
+            float t = hit.barycentrics.y;
+            isect.posW = ray.origin + t * ray.direction;
+
+            // Compute hit T from posW and ray origin.
+            isect.hitT = t;
+        }
+
+        // Note: We want to pass to vertex positions through shading normals. It hasn't been implemented yet.
+        // TODO: Handle shading (vertex) normals correctly.
+        // isect.normalW = computeShadingNormal(isect.instanceID, isect.triangleID, isect.barycentrics);
+        isect.normalW = float3(0.f);
+        return isect;
+    }
+
+    // Compute differentiable intersection from non-differentiable HitInfo.
+    [Differentiable]
+    [PreferRecompute]
+    IntersectionAD computeGaussIntersectionAD_test(const HitInfo hitInfo, const RayAD ray, DiffIntersectionMode mode, out HitInfo hitinfo)
+    {
+        hitinfo = hitInfo;
+        GaussHit hit = hitInfo.getGaussHit();
+
+        IntersectionAD isect = IntersectionAD();
+
+        isect.triangleID = hit.primitiveIndex;
+        isect.instanceID = hit.instanceID;
 
         if (mode == DiffIntersectionMode.AttachToRay)
         {
@@ -152,7 +229,7 @@ struct SceneQueryAD : IDifferentiable
             float t;
             isect.posW = no_diff gScene.getCustomPrimitiveAABB(hit.instanceID).center();
             isect.barycentrics = no_diff hit.getBarycentricWeights();
-            isect.triangleID = INT32_MAX;
+            isect.hitT = length(isect.posW - ray.origin);
         }
         else if (mode == DiffIntersectionMode.AttachToGeometry)
         {
@@ -161,7 +238,6 @@ struct SceneQueryAD : IDifferentiable
             // Fix barycentrics.
             isect.barycentrics = no_diff(hit.getBarycentricWeights());
             isect.posW = no_diff gScene.getCustomPrimitiveAABB(hit.instanceID).center();
-            isect.triangleID = INT32_MAX;
             // Compute hit T from posW and ray origin.
             isect.hitT = length(isect.posW - ray.origin);
         }
@@ -169,7 +245,7 @@ struct SceneQueryAD : IDifferentiable
         // Note: We want to pass to vertex positions through shading normals. It hasn't been implemented yet.
         // TODO: Handle shading (vertex) normals correctly.
         // isect.normalW = computeShadingNormal(isect.instanceID, isect.triangleID, isect.barycentrics);
-
+        isect.normalW = float3(0.f);
         return isect;
     }
 

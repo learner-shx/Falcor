@@ -45,6 +45,8 @@ import DiffRendering.DiffSceneQuery;
 
 import Scene.Material.GaussMaterialData;
 
+import DiffRendering.DiffDebug;
+
 __exported import StaticParams;
 __exported import Params;
 import WarpedAreaReparam;
@@ -95,6 +97,48 @@ float evalMIS(float n0, float p0, float n1, float p1)
     return q0 / (q0 + q1);
 }
 
+/**
+ * Returns the shading normal flipped for backfacing hits on double-sided materials.
+ * This reproduces the legacy behavior before the conventions were updated.
+ */
+[Differentiable]
+[PreferRecompute]
+float3 getFlippedShadingNormal(const ShadingData sd)
+{
+    return !sd.frontFacing && sd.mtl.isDoubleSided() ? -sd.frame.N : sd.frame.N;
+}
+
+[Differentiable]
+[PreferRecompute]
+float3 evalDirectAnalytic( SceneQueryAD sceneQuery, const ShadingData sd, const IMaterialInstance mi, DiffMaterialData diffData, const float3 rayOrigin, inout SampleGenerator sg)
+{
+    // Use all analytic light sources.
+    const uint lightCount = gScene.getLightCount();
+    float invPdf = 1.0f / lightCount; // Light selection pdf = 1.0f / lightCount.
+
+    float3 contribution = float3(0.0f);
+
+    // contribution += mi.evalAD(diffData, sd, rayOrigin, sg);
+    [MaxIters(100)]
+    for (uint lightIndex = 0; lightIndex < lightCount; lightIndex++)
+    {
+        // Sample local light source.
+        AnalyticLightSample ls;
+        bool valid = sampleLight(rayOrigin, gScene.getLight(lightIndex), sg, ls);
+
+        // Reject sample if lower hemisphere.
+        if (valid && dot(ls.dir, getFlippedShadingNormal(sd)) > kMinCosTheta)
+        {
+            // Test visibility by tracing a shadow ray.
+            Ray shadowRay = Ray(ls.posW, ls.dir, 0.f, ls.distance);;
+            bool visible = sceneQuery.traceVisibilityRay(shadowRay);
+
+            contribution += mi.evalAD(diffData, sd, ls.dir, sg) * ls.Li * invPdf;
+        }
+    }
+    return contribution;
+}
+
 [Differentiable]
 [PreferRecompute]
 ShadingData loadShadingData(
@@ -125,7 +169,7 @@ ShadingData loadShadingData(
         sd.materialGradOffset = materialID * DiffMaterialData::kMaterialParamCount;
     }
 
-    if (hit.getType() == HitType::Gauss)
+    else if (hit.getType() == HitType::Gauss)
     {
         const GaussHit gaussHit = hit.getGaussHit();
         // v = gScene.getVertexData(gaussHit);
@@ -140,6 +184,8 @@ ShadingData loadShadingData(
 
         // Set offset value for the material gradient propagation.
         sd.materialGradOffset = materialID * DiffMaterialData::kMaterialParamCount;
+        bool valid;
+        sd.frame = ShadingFrame::createSafe(isect.normalW, float4(0.0f), valid);
     }
 
 
@@ -262,6 +308,7 @@ void computeNEE(
     float areaToSolidAngle = (dist * dist) / dot(ls.lightNormal, -ray.direction);
     float3 bsdfValue = mi.evalAD(diffData, sd, ray.direction, sg);
     float3 weight = ls.Li * bsdfValue * areaToSolidAngle / detach(areaToSolidAngle);
+    // float3 weight = bsdfValue;
 
     if (kUseMIS)
     {
@@ -271,6 +318,33 @@ void computeNEE(
 
     pathData.radiance += thp * weight;
 }
+
+// void packHeader( inout PackedHitInfo packed, const HitType type, const GeometryInstanceID instanceID, const uint primitiveIndex, uint kHeaderBits, uint kTypeOffset, uint kInstanceIDOffset)
+// {
+//     if (kHeaderBits <= 32)
+//     {
+//         packed[0] = (uint(type) << kTypeOffset) | (instanceID.index << kInstanceIDOffset) | primitiveIndex;
+//     }
+//     else
+//     {
+//         packed[0] = (uint(type) << kTypeOffset) | instanceID.index;
+//         packed[1] = primitiveIndex;
+//     }
+// }
+
+// void unpackHeader( const PackedHitInfo packed, out GeometryInstanceID instanceID, out uint primitiveIndex, uint kHeaderBits, uint kTypeOffset, uint kInstanceIDOffset, uint kInstanceIDBits, uint kPrimitiveIndexBits)
+// {
+//     if (kHeaderBits <= 32)
+//     {
+//         instanceID.index = { (packed[0] >> kInstanceIDOffset) & ((1 << kInstanceIDBits) - 1) };
+//         primitiveIndex = packed[0] & ((1 << kPrimitiveIndexBits) - 1);
+//     }
+//     else
+//     {
+//         instanceID.index = { packed[0] & ((1 << kInstanceIDBits) - 1) };
+//         primitiveIndex = packed[1];
+//     }
+// }
 
 
 [Differentiable]
@@ -289,108 +363,86 @@ void handleHit(
     TriangleHit triHit = { isect.instanceID, isect.triangleID, isect.barycentrics.y, isect.barycentrics.z };
     GaussHit gaussHit = { isect.instanceID, isect.triangleID, isect.barycentrics.y, isect.barycentrics.z };
 
-    if(isect.triangleID == INT32_MAX)
+    if (gScene.getGeometryInstanceType(isect.instanceID) == GeometryType::Custom)
         hit = HitInfo(gaussHit);
     else
         hit = HitInfo(triHit);
-    // pathData.radiance += float3(hit.getGaussHit().barycentrics.xy * 0.5f, 0.0f);
 
     // Load shading data.
     ShadingData sd;
+
 
     sd = loadShadingData(sceneQuery, hit, isect, ray.origin, ray.direction, lod);
 
     // Create differentiable material instance.
     DiffMaterialData diffData = DiffMaterialData();
     let mi = getDiffMaterialInstance(diffData, sd, lod);
-    float3 radiance = mi.evalAD(diffData, sd, ray.direction, sg);
 
-    // Add emitted light.
-    const bool isPrimaryHit = pathData.length == 0;
-    if (isPrimaryHit || kUseEmissiveLights && (!kUseNEE || kUseMIS))
+    print<uint>("instanceID", isect.instanceID.index);
+    print<uint>("materialID", sd.materialID);
+    print<uint>("CustomPrimitiveCount", gScene.customPrimitiveInstanceCount);
+    print<uint>("CustomPrimitiveOffset", gScene.customPrimitiveInstanceOffset);
+
+    print<uint>("gDiffDebug.id.x", gDiffDebug.id.x);
+    GeometryInstanceID testID;
+    uint testPId;
+
+    if (gScene.getGeometryInstanceType(isect.instanceID) == GeometryType::Custom)
     {
-        float misWeight = 1.f;
+        // CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(isect.instanceID);
+        // float alpha;
+        // uint offset = 0;
+        // diffData.read(alpha, offset);
+        // float epower = exp(-10 * gaussHit.barycentrics.x);
+        // alpha *= epower;
+        // pathData.radiance += mi.evalAD(diffData, sd, float3(0.0), sg) * pathData.thp * epower;
+        // pathData.thp *= (1 - alpha);
 
-        if (!isPrimaryHit && kUseEmissiveLights && kUseNEE && kUseMIS)
-        {
-            // Prepare hit point struct with data needed for emissive light PDF evaluation.
-            TriangleLightHit lightHit;
-            lightHit.triangleIndex = gScene.lightCollection.getTriangleIndex(triHit.instanceID, triHit.primitiveIndex);
-            lightHit.posW = sd.posW;
-            lightHit.normalW = sd.getOrientedFaceNormal();
+        CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(isect.instanceID);
+        float alpha;
+        float3 baseColor;
+        uint offset = 0;
+        // diffData.read(alpha, offset);
+        diffData.read(baseColor, offset);
+        // float epower = exp(-10 * gaussHit.barycentrics.x);
+        // alpha *= epower;
+        pathData.radiance += mi.evalAD(diffData, sd, float3(0.0), sg);
 
-            // Evaluate PDF at the hit, had it been generated with light sampling.
-            // Emissive light samplers have an option to exclusively sample the upper hemisphere.
-            bool upperHemisphere = true;
-            float lightPdf = no_diff emissiveSampler.evalPdf(detach(ray.origin), pathData.normal, upperHemisphere, lightHit);
-
-            // Compute MIS weight by combining this with BSDF sampling.
-            // Note we can assume path.pdf > 0.f since we shouldn't have got here otherwise.
-            misWeight = no_diff evalMIS(1, pathData.pdf, 1, lightPdf);
-        }
-
-        // TODO: support differentiable for the emission of lights.
-        pathData.radiance += pathData.thp * mi.getProperties(sd).emission * misWeight;
+        // pathData.radiance += float3(0.1f) * baseColor;
+        // pathData.thp *= (1 - alpha);
+    }
+    else
+    {
+        // pathData.radiance += evalDirectAnalytic(sceneQuery, sd, mi, diffData, ray.origin, sg);
     }
 
-    // Check whether to terminate based on max depth.
+    // float3 hitPos = isect.posW;
 
-    if (pathData.length >= kMaxBounces + 1)
-    {
-        pathData.terminated = true;
-        return;
-    }
+    // ray.origin = computeRayOrigin(hitPos, ray.direction);
+    // ray.direction = ray.direction;
 
-    // Compute NEE. Assume we only have area lights for now.
-    if (kUseNEE)
-    {
-        LightSample ls = {};
-        bool validSample = generateEmissiveSample(isect, emissiveSampler, true, sg, ls);
-        if (validSample)
-        {
-            Ray shadowRay = ls.getVisibilityRay();
-            bool visible = sceneQuery.traceVisibilityRay(shadowRay);
+    // pathData.radiance += float3(1 / 10.0f, 1 / 10.0f, 1 / 10.0f);
+    // pathData.radiance += gScene.customPrimitiveInstanceOffset / 10.0;
+    // pathData.radiance += float3(0.0f, 1.0f, 0.0f);;
 
-            if (visible)
-            {
-                computeNEE(sceneQuery, sd, mi, diffData, isect, ls, pathData, sg);
-            }
-        }
-    }
-
-    // Compute ray origin for new rays spawned from the hit.
-    float3 hitPos = isect.posW;
-
-    ray.origin = hitPos;
-    ray.direction = ray.direction;
-
-    // Generate scatter ray for the next path segment.
-    // The raygen shader will continue the path based on the returned payload.
-    // print("check", isect.instanceID);
-    uint materialID = gScene.getMaterialID(isect.instanceID);
-    GeometryInstanceID idx = GeometryInstanceID(0, 0);
-    idx.index = 0;
-    float3 aabb = no_diff gScene.getCustomPrimitiveAABB(isect.instanceID).center();
-    CustomPrimitiveDesc desc = gScene.getCustomPrimitiveDesc(isect.instanceID);
-
-    // let mi = gScene.materials.getMaterial(desc.materialID);
-
-
-    // if (isect.instanceID.index == 2)
-    //     pathData.radiance += float3(1.0f, 1.0f, 0.0f);
-    // else if (isect.instanceID.index == 0)
-    //     pathData.radiance += float3(1.0f, 0.0f, 0.0f);
-    // else if (isect.instanceID.index == 1)
-    //     pathData.radiance += float3(0.0f, 1.0f, 0.0f);
-    // else if (isect.instanceID.index == 3)
-    //     pathData.radiance += radiance ;
-
-    pathData.radiance += radiance;
-    // if (!generateScatterRay(sceneQuery, sd, mi, diffData, isect, ray, pathData, sg))
+    // if (gScene.getGeometryInstanceType(isect.instanceID) == GeometryType::Custom)
     // {
-    //     pathData.terminated = true;
-    //     return;
+    //     ray.origin = computeRayOrigin(hitPos, ray.direction);
     // }
 
+    // else
+    // {
+    //     if (!generateScatterRay(sceneQuery, sd, mi, diffData, isect, ray, pathData, sg))
+    //     {
+    //         pathData.terminated = true;
+    //         return;
+    //     }
+    // }
+
+    // print<float4>("ray.direction", float4(ray.direction, 1.0f));
+    print<float>("pathData.thp.x", pathData.thp.x);
+
     pathData.length++;
+    print<uint>("pathData.length", pathData.length);
+    print<float>("hitT", isect.hitT);
 }

@@ -34,7 +34,7 @@
 #include "Rendering/Lights/EmissiveUniformSampler.h"
 #include "DiffRendering/SceneGradients.h"
 #include "DiffRendering/SharedTypes.slang"
-
+#include "Utils/Timing/Clock.h"
 #include "Params.slang"
 
 using namespace Falcor;
@@ -57,7 +57,7 @@ public:
     virtual void execute(RenderContext* pRenderContext, const RenderData& renderData) override;
     virtual void renderUI(Gui::Widgets& widget) override;
     virtual void setScene(RenderContext* pRenderContext, const ref<Scene>& pScene) override;
-    virtual bool onMouseEvent(const MouseEvent& mouseEvent) override { return false; }
+    virtual bool onMouseEvent(const MouseEvent& mouseEvent) override;
     virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
     static void registerScriptBindings(pybind11::module& m);
@@ -69,7 +69,6 @@ public:
     void setRunBackward(uint32_t value) { mParams.runBackward = value; }
     const ref<Buffer>& getdLdI() const { return mpdLdI; }
     void setdLdI(const ref<Buffer>& buf) { mpdLdI = buf; }
-
     void setDiffDebugParams(DiffVariableType varType, uint2 id, uint32_t offset, float4 grad);
 
 private:
@@ -94,7 +93,7 @@ private:
     };
     void parseProperties(const Properties& props);
     void setFrameDim(const uint2 frameDim);
-    void updatePrograms();
+    void updatePrograms(RenderContext* pRenderContext);
     void resetLighting();
     void prepareResources(RenderContext* pRenderContext, const RenderData& renderData);
     void bindShaderData(const ShaderVar& var, const RenderData& renderData, bool useLightSampling = true) const;
@@ -195,7 +194,7 @@ private:
 
     /// Use importance sampling for materials.
     bool mUseImportanceSampling = true;
-
+    Clock mClock;
 
     // Configuration
 
@@ -217,7 +216,7 @@ private:
     /// True if the config has changed since last frame.
     bool mOptionsChanged = false;
 
+    bool mGeometryChanged = false;
     // Ray tracing program
     std::unique_ptr<TracePass> mpTracePass;
-
 };

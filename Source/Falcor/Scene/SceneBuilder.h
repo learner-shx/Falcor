@@ -49,6 +49,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <random>
 
 namespace Falcor
 {
@@ -463,6 +464,11 @@ namespace Falcor
             \param[in] pMaterial An reference to a material.
         */
         void addCustomPrimitiveWithMaterial(uint32_t userID, const AABB& aabb, const ref<Material>& pMaterial);
+
+        /** Add an random AABB and a material defining a custom primitive.
+            \param[in] userID User-defined ID that can be used to identify different sub-types of custom primitives.
+        */
+        void addRandomCustomPrimitiveWithMaterial(uint32_t userID);
 
         // Curves
 

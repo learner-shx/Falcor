@@ -33,6 +33,7 @@
 #include "Scene/Material/MaterialSystem.h"
 #include "Scene/Material/DiffuseSpecularUtils.h"
 #include "Utils/Math/Common.h"
+#include "GaussMaterialParamLayout.slang"
 
 namespace Falcor
 {
@@ -100,6 +101,21 @@ namespace Falcor
     TypeConformanceList GaussMaterial::getTypeConformances() const
     {
         return { {{"GaussMaterial", "IMaterial"}, (uint32_t)MaterialType::Gauss} };
+    }
+
+    const MaterialParamLayout& GaussMaterial::getParamLayout() const
+    {
+        return GaussMaterialParamLayout::layout();
+    }
+
+    SerializedMaterialParams GaussMaterial::serializeParams() const
+    {
+        return GaussMaterialParamLayout::serialize(this);
+    }
+
+    void GaussMaterial::deserializeParams(const SerializedMaterialParams& params)
+    {
+        GaussMaterialParamLayout::deserialize(this, params);
     }
 
     void GaussMaterial::setCovDiag(float3 covDiag)

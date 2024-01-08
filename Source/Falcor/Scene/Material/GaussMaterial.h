@@ -89,6 +89,10 @@ namespace Falcor
         */
         void setCovariance(float3 sigma, float3 angles);
 
+        const MaterialParamLayout& getParamLayout() const override;
+        SerializedMaterialParams serializeParams() const override;
+        void deserializeParams(const SerializedMaterialParams& params) override;
+
 
 
     protected:

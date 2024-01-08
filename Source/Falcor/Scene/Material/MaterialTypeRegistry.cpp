@@ -35,6 +35,8 @@
 #include "Scene/Material/PBRT/PBRTDiffuseMaterialParamLayout.slang"
 #include "Scene/Material/PBRT/PBRTConductorMaterial.h"
 #include "Scene/Material/PBRT/PBRTConductorMaterialParamLayout.slang"
+#include "Scene/Material/GaussMaterial.h"
+#include "Scene/Material/GaussMaterialParamLayout.slang"
 
 #include <mutex>
 #include <map>
@@ -103,6 +105,8 @@ public:
             return PBRTDiffuseMaterialParamLayout::layout();
         case MaterialType::PBRTConductor:
             return PBRTConductorMaterialParamLayout::layout();
+        case MaterialType::Gauss:
+            return GaussMaterialParamLayout::layout();
         }
         return {};
     }

@@ -180,15 +180,26 @@ struct GaussIntersector
         GaussMaterialData data = reinterpret<GaussMaterialData, MaterialPayload>(gScene.materials.getMaterialDataBlob(desc.materialID).payload);
         float3 diag = data.covDiag;
         float3 offDiag = data.covOffDiag;
-        float3x3 covariance = float3x3(diag.x, offDiag.x, offDiag.y,
-                                   offDiag.x, diag.y, offDiag.z,
-                                   offDiag.y, offDiag.z, diag.z);
+        float3x3 covariance = float3x3( diag.x, offDiag.x, offDiag.y,
+                                        offDiag.x, diag.y, offDiag.z,
+                                        offDiag.y, offDiag.z, diag.z);
         float d;
+        // intersect with gauss
         bool isHit = intersectGauss(ray.origin, ray.dir, mu, covariance, t, d);
+
+        // intersect with aabb
+        // float2 nF;
+        // bool isHit = intersectRayAABB(ray.origin, ray.dir, aabb.minPoint, aabb.maxPoint, nF);
 
         if (isHit)
         {
-            attribs.barycentrics = float2(d, 0);
+            // intersect with gauss, (d, t)
+            attribs.barycentrics = float2(d, t);
+
+            // intersect with aabb, (near, far)
+            // attribs.barycentrics = nF;
+
+
         }
 
         return isHit;

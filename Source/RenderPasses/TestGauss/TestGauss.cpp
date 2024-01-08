@@ -78,16 +78,11 @@ std::mt19937 rng;
 extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registry)
 {
     registry.registerClass<RenderPass, TestGauss>();
+    ScriptBindings::registerBinding(TestGauss::registerScriptBindings);
 }
 
 void TestGauss::registerScriptBindings(pybind11::module& m)
 {
-    pybind11::class_<TestGauss, RenderPass, ref<TestGauss>> pass(m, "TestGauss");
-    pass.def_property("scene_gradients", &TestGauss::getSceneGradients, &TestGauss::setSceneGradients);
-    pass.def_property("run_backward", &TestGauss::getRunBackward, &TestGauss::setRunBackward);
-    pass.def_property("dL_dI", &TestGauss::getdLdI, &TestGauss::setdLdI);
-    pass.def("addRandomGauss", &TestGauss::addRandomGauss);
-
     if (!pybind11::hasattr(m, "DiffMode"))
     {
         pybind11::enum_<DiffMode> diffMode(m, "DiffMode");
@@ -96,6 +91,12 @@ void TestGauss::registerScriptBindings(pybind11::module& m)
         diffMode.value("ForwardDiffDebug", DiffMode::ForwardDiffDebug);
         diffMode.value("BackwardDiffDebug", DiffMode::BackwardDiffDebug);
     }
+
+    pybind11::class_<TestGauss, RenderPass, ref<TestGauss>> pass(m, "TestGauss");
+    pass.def_property("scene_gradients", &TestGauss::getSceneGradients, &TestGauss::setSceneGradients);
+    pass.def_property("run_backward", &TestGauss::getRunBackward, &TestGauss::setRunBackward);
+    pass.def_property("dL_dI", &TestGauss::getdLdI, &TestGauss::setdLdI);
+    pass.def("addRandomGauss", &TestGauss::addRandomGauss);
 }
 
 
@@ -113,13 +114,15 @@ TestGauss::TestGauss(ref<Device> pDevice, const Properties& props) : RenderPass(
     if (mStaticParams.diffVarName == "CBOX_BUNNY_MATERIAL")
     {
         // Albedo value with materialID = 0
-        setDiffDebugParams(DiffVariableType::Material, uint2(0, 0), 0, float4(1.f, 1.f, 1.f, 0.f));
+        setDiffDebugParams(DiffVariableType::Material, uint2(2, 0), 0, float4(1.f, 1.f, 1.f, 0.f));
     }
+
     else if (mStaticParams.diffVarName == "CBOX_BUNNY_TRANSLATION")
     {
         // Vertical translation with meshID = 0
         setDiffDebugParams(DiffVariableType::GeometryTranslation, uint2(0, 0), 0, float4(0.f, 1.f, 0.f, 0.f));
     }
+    // setDiffDebugParams(DiffVariableType::Material, uint2(4, 0), 0, float4(1.f, 1.f, 1.f, 0.f));
 }
 
 void TestGauss::parseProperties(const Properties& props)
@@ -250,6 +253,8 @@ TestGauss::TracePass::TracePass(
 
     pProgram = Program::create(pDevice, desc, defines);
 }
+
+
 void TestGauss::TracePass::prepareProgram(ref<Device> pDevice, const DefineList& defines)
 {
     FALCOR_ASSERT(pProgram != nullptr && pBindingTable != nullptr);
@@ -258,10 +263,17 @@ void TestGauss::TracePass::prepareProgram(ref<Device> pDevice, const DefineList&
         pProgram->addDefine(passDefine);
     pVars = RtProgramVars::create(pDevice, pProgram, pBindingTable);
 }
-void TestGauss::updatePrograms()
+
+void TestGauss::updatePrograms(RenderContext* pRenderContext)
 {
     FALCOR_ASSERT(mpScene);
 
+    if (mGeometryChanged)
+    {
+        mpScene->update(pRenderContext, mClock.getTime());
+        mRecompile = true;
+        mGeometryChanged = false;
+    }
     if (mRecompile == false)
         return;
 
@@ -281,6 +293,11 @@ void TestGauss::updatePrograms()
 
     mVarsChanged = true;
     mRecompile = false;
+}
+
+bool TestGauss::onMouseEvent(const MouseEvent& mouseEvent)
+{
+    return mpPixelDebug->onMouseEvent(mouseEvent);
 }
 
 void TestGauss::prepareResources(RenderContext* pRenderContext, const RenderData& renderData)
@@ -370,7 +387,8 @@ void TestGauss::execute(RenderContext* pRenderContext, const RenderData& renderD
         return;
 
     // Update shader program specialization.
-    updatePrograms();
+    // mpScene->update(pRenderContext, 0.0);
+    updatePrograms(pRenderContext);
 
     // Prepare resources.
     prepareResources(pRenderContext, renderData);
@@ -384,6 +402,7 @@ void TestGauss::execute(RenderContext* pRenderContext, const RenderData& renderD
     tracePass(pRenderContext, renderData, *mpTracePass);
 
     endFrame(pRenderContext, renderData);
+
 }
 
 void TestGauss::resetLighting()
@@ -412,7 +431,7 @@ void TestGauss::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene
         //     logError("WARDiffPathTracer: This render pass does not support custom primitives.");
         // }
 
-        // sceneChanged(pRenderContext);
+        sceneChanged(pRenderContext);
 
         mRecompile = true;
     }
@@ -485,7 +504,6 @@ void TestGauss::prepareMaterials(RenderContext* pRenderContext)
     // This functions checks for material changes and performs any necessary update.
     // For now all we need to do is to trigger a recompile so that the right defines get set.
     // In the future, we might want to do additional material-specific setup here.
-
     if (is_set(mpScene->getUpdates(), Scene::UpdateFlags::RecompileNeeded))
     {
         mRecompile = true;
@@ -630,6 +648,7 @@ void TestGauss::renderUI(Gui::Widgets& widget)
     if (widget.button("Add"))
     {
         addRandomGauss();
+        mGeometryChanged = true;
     }
 
     bool dirty = false;
@@ -775,8 +794,8 @@ void TestGauss::addRandomGauss()
     }
 
     std::uniform_real_distribution<float> u(0.f, 1.f);
-
-    ref<GaussMaterial> pRandomGaussMat = GaussMaterial::create(mpDevice, "");
+    uint32_t matCount = mpScene->getMaterialCount();
+    ref<GaussMaterial> pRandomGaussMat = GaussMaterial::create(mpDevice, std::to_string(matCount) + "Gauss");
     pRandomGaussMat.get()->setBaseColor(float3(u(rng), u(rng), u(rng)));
     pRandomGaussMat.get()->setCovariance(float3(u(rng), u(rng), u(rng)), float3(u(rng) * M_2_PI, u(rng) * M_2_PI, u(rng) * M_2_PI));
     pRandomGaussMat.get()->setAlpha(u(rng));
