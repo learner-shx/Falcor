@@ -43,9 +43,9 @@ def main(args):
         },
         falcor.MaterialType.Gauss: {
             "base_color": 1e-2,
-            # "cov_diag": 1e-2,
-            # "cov_off_diag": 1e-2,
-            # "alpha":1e-2,
+            "cov_diag": 1e-2,
+            "cov_off_diag": 1e-2,
+            "alpha":1e-2,
         },
     }
 
@@ -84,7 +84,10 @@ def main(args):
             params_dicts[falcor.MaterialType.PBRTConductor]["eta"],
             params_dicts[falcor.MaterialType.PBRTConductor]["k"],
             params_dicts[falcor.MaterialType.PBRTConductor]["roughness"],
-            params_dicts[falcor.MaterialType.Gauss]["base_color"]
+            params_dicts[falcor.MaterialType.Gauss]["base_color"],
+            params_dicts[falcor.MaterialType.Gauss]["alpha"],
+            params_dicts[falcor.MaterialType.Gauss]["cov_diag"],
+            params_dicts[falcor.MaterialType.Gauss]["cov_off_diag"],
         )
         cur_img[cur_img.isnan()] = 0.0
 

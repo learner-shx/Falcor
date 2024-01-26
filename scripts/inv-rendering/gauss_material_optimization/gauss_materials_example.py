@@ -19,8 +19,8 @@ class GaussMaterialsExample:
     width: int = 1920
     height: int = 1080
 
-    M: int = 7                         # Size of the sphere array
-    material_count: int = 4            # Number of materials
+    M: int = 1005                         # Size of the sphere array
+    material_count: int = 2000         # Number of materials
     niter: int = 100                    # Number of iterations
 
     spp_ref: int = 10                  # Sample count for the reference images

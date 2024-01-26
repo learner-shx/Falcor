@@ -20,6 +20,9 @@ class DiffRenderFunction(torch.autograd.Function):
         conductor_k,
         conductor_roughness,
         gauss_base_color,
+        gauss_alpha,
+        gauss_cov_diag,
+        gauss_cov_off_diag,
         context,
     ):
         ctx.context = context
@@ -50,6 +53,9 @@ class DiffRenderFunction(torch.autograd.Function):
             },
             falcor.MaterialType.Gauss: {
                 "base_color": gauss_base_color.detach(),
+                "alpha": gauss_alpha.detach(),
+                "cov_diag": gauss_cov_diag.detach(),
+                "cov_off_diag": gauss_cov_off_diag.detach(),
                 "idx": material_params_dicts[falcor.MaterialType.Gauss]["idx"],
             },
         }
@@ -101,6 +107,9 @@ class DiffRenderFunction(torch.autograd.Function):
             grad[falcor.MaterialType.PBRTConductor]["k"],
             grad[falcor.MaterialType.PBRTConductor]["roughness"],
             grad[falcor.MaterialType.Gauss]["base_color"],
+            grad[falcor.MaterialType.Gauss]["alpha"],
+            grad[falcor.MaterialType.Gauss]["cov_diag"],
+            grad[falcor.MaterialType.Gauss]["cov_off_diag"],
             None,
         )
 
@@ -134,7 +143,10 @@ class DiffRenderModule(torch.nn.Module):
         conductor_eta,
         conductor_k,
         conductor_roughness,
-        gauss_base_color
+        gauss_base_color,
+        gauss_alpha,
+        gauss_cov_diag,
+        gauss_cov_off_diag,
     ):
         return DiffRenderFunction.apply(
             standard_base_color,
@@ -145,5 +157,8 @@ class DiffRenderModule(torch.nn.Module):
             conductor_k,
             conductor_roughness,
             gauss_base_color,
+            gauss_alpha,
+            gauss_cov_diag,
+            gauss_cov_off_diag,
             self.context,
         )

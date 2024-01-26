@@ -86,19 +86,19 @@ float3 tracePath(SceneQueryAD sceneQuery, float2 pixel, no_diff float2 pixelCent
     if (!sceneQuery.traceRayInlineAD(ray, isect, SceneQueryAD.DiffIntersectionMode.AttachToRay))
         return pathData.radiance;
 
-    handleHit(sceneQuery, isect, gDiffPTData.emissiveSampler, pathData, ray, sg);
+    // handleHit(sceneQuery, isect, gDiffPTData.emissiveSampler, pathData, ray, sg);
 
-    // [MaxIters(MAX_BOUNCES + 2)]
-    // while (!pathData.terminated)
-    // {
-    //     handleHit(sceneQuery, isect, gDiffPTData.emissiveSampler, pathData, ray, sg);
+    [MaxIters(MAX_PATH_LENGTH + 2)]
+    while (!pathData.terminated)
+    {
+        handleHit(sceneQuery, isect, gDiffPTData.emissiveSampler, pathData, ray, sg);
 
-    //     if (pathData.terminated)
-    //         break;
+        if (pathData.terminated)
+            break;
 
-    //     if (!sceneQuery.traceRayInlineAD(ray, isect, SceneQueryAD.DiffIntersectionMode.AttachToRay))
-    //         break;
-    // }
+        if (!sceneQuery.traceRayInlineAD(ray, isect, SceneQueryAD.DiffIntersectionMode.AttachToRay))
+            break;
+    }
 
     return pathData.radiance;
 }

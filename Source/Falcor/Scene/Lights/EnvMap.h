@@ -89,8 +89,8 @@ namespace Falcor
 
         /** Get intensity.
         */
-        float getIntensity() const { return mData.intensity; }
 
+        float getIntensity() const { return mData.intensity; }
         /** Get color tint.
         */
         float3 getTint() const { return mData.tint; }

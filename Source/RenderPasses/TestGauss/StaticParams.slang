@@ -51,3 +51,5 @@ static const float kHarmonicGamma = HARMONIC_GAMMA;
 static const bool kUseEnvLight = USE_ENV_LIGHT;
 static const bool kUseAnalyticLights = USE_ANALYTIC_LIGHTS;
 static const bool kUseEmissiveLights = USE_EMISSIVE_LIGHTS;
+
+static const int kMaxPathLength = MAX_PATH_LENGTH;

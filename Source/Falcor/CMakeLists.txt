@@ -257,6 +257,10 @@ target_sources(Falcor PRIVATE
     Rendering/Materials/TexLODTypes.slang
     Rendering/Materials/GaussMaterial.slang
     Rendering/Materials/GaussMaterialInstance.slang
+    Rendering/Materials/OpenSVBRDFMaterial.slang
+    Rendering/Materials/OpenSVBRDFMaterialInstance.slang
+    Rendering/Materials/De18Material.slang
+    Rendering/Materials/De18MaterialInstance.slang
 
     Rendering/Materials/PBRT/PBRTDiffuseMaterial.slang
     Rendering/Materials/PBRT/PBRTDiffuseMaterialInstance.slang
@@ -283,6 +287,7 @@ target_sources(Falcor PRIVATE
     Rendering/Materials/BSDFs/SimpleBTDF.slang
     Rendering/Materials/BSDFs/SpecularMicrofacet.slang
     Rendering/Materials/BSDFs/StandardBSDF.slang
+    Rendering/Materials/BSDFs/CookTorranceBRDF.slang
 
     Rendering/RTXDI/EnvLightUpdater.cs.slang
     Rendering/RTXDI/LightUpdater.cs.slang
@@ -459,6 +464,12 @@ target_sources(Falcor PRIVATE
     Scene/Material/GaussMaterial.h
     Scene/Material/GaussMaterialData.slang
     Scene/Material/GaussMaterialParamLayout.slang
+    Scene/Material/OpenSVBRDFMaterial.h
+    Scene/Material/OpenSVBRDFMaterial.cpp
+    Scene/Material/OpenSVBRDFMaterialParamLayout.slang
+    Scene/Material/De18Material.h
+    Scene/Material/De18Material.cpp
+    Scene/Material/De18MaterialParamLayout.slang
 
     Scene/Material/PBRT/PBRTCoatedConductorMaterial.cpp
     Scene/Material/PBRT/PBRTCoatedConductorMaterial.h

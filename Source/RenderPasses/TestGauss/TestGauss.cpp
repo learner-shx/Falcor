@@ -73,6 +73,8 @@ const std::string kLog10vMFConcentrationScreen = "Log10vMFConcentrationScreen";
 const std::string kBoundaryTermBeta = "boundaryTermBeta";
 const std::string kUseAntitheticSampling = "useAntitheticSampling";
 
+const std::string kMaxPathLength = "maxPathLength";
+
 std::mt19937 rng;
 
 extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registry)
@@ -205,6 +207,7 @@ Properties TestGauss::getProperties() const
     props[kLog10vMFConcentrationScreen] = mStaticParams.log10vMFConcentrationScreen;
     props[kBoundaryTermBeta] = mStaticParams.boundaryTermBeta;
     props[kUseAntitheticSampling] = mStaticParams.useAntitheticSampling;
+    props[kMaxPathLength] = mStaticParams.maxPathLength;
     return props;
 }
 
@@ -766,6 +769,7 @@ DefineList TestGauss::StaticParams::getDefines(const TestGauss& owner) const
     defines.add("BOUNDARY_TERM_BETA", std::to_string(boundaryTermBeta));
     defines.add("USE_ANTITHETIC_SAMPLING", useAntitheticSampling ? "1" : "0");
     defines.add("HARMONIC_GAMMA", std::to_string(harmonicGamma));
+    defines.add("MAX_PATH_LENGTH", std::to_string(maxPathLength));
 
     // Sampling utilities configuration.
     FALCOR_ASSERT(owner.mpSampleGenerator);

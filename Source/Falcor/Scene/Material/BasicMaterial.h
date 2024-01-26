@@ -182,10 +182,12 @@ namespace Falcor
         /** Set the specular parameters.
         */
         void setSpecularParams(const float4& color);
+        void setSpecularParams3(const float3& color) { setSpecularParams(float4(color, getSpecularParams().w)); }
 
         /** Get the specular parameters.
         */
         float4 getSpecularParams() const { return (float4)mData.specular; }
+        float3 getSpecularParams3() const { return getSpecularParams().xyz(); }
 
         /** Set the transmission color.
         */

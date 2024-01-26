@@ -105,7 +105,7 @@ struct AnisotropicGGX : IDifferentiable
         if (isinf(tanThetaSq)) return 0.0f;
 
         float cosThetaQu = cosThetaSq * cosThetaSq;
-        if (cosThetaQu < 1e-16f) return 0.0f;
+        if (cosThetaQu < 1e-9f) return 0.0f;
 
         float2 cosSinPhiSq = sinThetaSq == 0.0f ? float2(1.0f, 0.0f) : float2(h.x * h.x, h.y * h.y) / sinThetaSq;
         float2 alphaSq = cosSinPhiSq / (alpha * alpha);

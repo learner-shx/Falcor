@@ -32,6 +32,9 @@ def raw_params_to_dicts(scene : falcor.Scene, material_ids, raw_params):
         },
         falcor.MaterialType.Gauss: {
             "base_color": torch.zeros(0, device=device),
+            "alpha": torch.zeros(0, device=device),
+            "cov_diag": torch.zeros(0, device=device),
+            "cov_off_diag": torch.zeros(0, device=device),
             "idx": [],
         }
     }

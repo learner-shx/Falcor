@@ -86,10 +86,10 @@ ShadingFrame computeShadingFrameFromNormalMap(const ShadingData sd, const Normal
     switch (type)
     {
     case NormalMapType::RGB:
-        mapN = rgbToNormal(encodedNormal);
+        mapN = rgbToNormal(encodedNormal) / distance(encodedNormal, float3(0));
         break;
     case NormalMapType::RG:
-        mapN = rgToNormal(encodedNormal.rg);
+        mapN = rgToNormal(encodedNormal.rg) /distance(encodedNormal, float3(0));
         break;
     case NormalMapType::None:
         return sd.frame;
@@ -103,6 +103,40 @@ ShadingFrame computeShadingFrameFromNormalMap(const ShadingData sd, const Normal
     return ShadingFrame(sd.frame.fromLocal(mapN), sd.tangentW);
 }
 
+/** Compute shading frame at shading point by applying normal mapping.
+    This function perturbs the shading normal using a local normal sampled from a normal map.
+    \param[in] sd Shading data.
+    \param[in] type Normal map encoding.
+    \param[in] encodedNormal Encoded normal.
+    \return Shading frame in world space.
+*/
+ShadingFrame computeShadingFrameFromNormalMapAndTangentMap(const ShadingData sd, const NormalMapType type, const float3 encodedNormal, const float3 encodedTangent)
+{
+    // Compute perturbed normal in the local frame with the +z axis up.
+    float3 mapN = { 0.f, 0.f, 1.f };
+    float3 mapT = { 1.f, 0.f, 0.f };
+    switch (type)
+    {
+    case NormalMapType::RGB:
+        mapN = rgbToNormal(encodedNormal) / normalize(encodedNormal);
+        mapT = rgbToNormal(encodedTangent) / normalize(encodedTangent);;
+        break;
+    case NormalMapType::RG:
+        mapN = rgToNormal(encodedNormal.rg) / distance(encodedNormal, float3(0));
+        mapT = rgToNormal(encodedTangent.rg) / distance(encodedTangent, float3(0));
+        break;
+    case NormalMapType::None:
+        return sd.frame;
+    }
+
+    // Note if the normal ends up being parallel to the tangent, the tangent frame cannot be orthonormalized.
+    // That case is rare enough that it is probably not worth the runtime cost to check for it here.
+    // If it occurs we should foremost fix the asset, or if problems persist add a check here.
+
+    // Apply the transformation.
+    return ShadingFrame(sd.frame.fromLocal(mapN), float4(sd.frame.fromLocal(mapT), 1.0f));
+}
+
 /** Flip shading normal for backfacing hit on double-sided material.
     \param[in] sd Shading data.
     \param[in,out] sf Shading frame that will be modified.
@@ -113,6 +147,11 @@ void flipShadingNormal(const ShadingData sd, inout ShadingFrame sf)
     if (!sd.frontFacing && sd.mtl.isDoubleSided())
     {
         sf.N = -sf.N;
+    }
+
+    if (!sd.frontFacing && sd.mtl.isDoubleSided())
+    {
+        sf.T = -sf.T;
     }
 }
 

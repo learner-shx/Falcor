@@ -158,6 +158,8 @@ private:
         /// Gamma parameter for the harmonic weights.
         float harmonicGamma = 2.f;
 
+        uint32_t maxPathLength = 10;
+
         DefineList getDefines(const TestGauss& owner) const;
     };
 

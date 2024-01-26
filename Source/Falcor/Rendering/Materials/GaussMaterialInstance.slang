@@ -82,7 +82,6 @@ struct GaussMaterialInstance : MaterialInstanceBase, IMaterialInstance
         diffData.read(covOffDiag, offset);
         diffData.read(alpha, offset);
 
-
         // baseColor = float3(diffData.data[1], diffData.data[2], diffData.data[3]);
         return baseColor * alpha;
     }
